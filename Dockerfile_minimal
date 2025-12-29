@@ -65,12 +65,13 @@ RUN python3 downloader.py --download-lj-only && \
   sed -i -E 's/[[:space:]]+/ /g' datasets/*.txt && \
   mv datasets/com-lj.ungraph.txt datasets/com-lj.ungraph.el
 WORKDIR /workspace/gfe_driver/datasets
-RUN wget https://datasets.ldbcouncil.org/graphalytics/dota-league.tar.zst
-RUN tar -I zstd -xvf dota-league.tar.zst
+RUN wget https://datasets.ldbcouncil.org/graphalytics/dota-league.tar.zst && \
+  tar -I zstd -xvf dota-league.tar.zst
 
 # ----------------------------
 # Configure GFE Driver
 # ----------------------------
+WORKDIR /workspace/gfe_driver
 RUN git submodule update --init && \
     mkdir build && \
     cd build && \
