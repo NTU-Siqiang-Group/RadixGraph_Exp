@@ -24,7 +24,7 @@ docker build -t radixgraph-exp .
 
 Run full experiments:
 ```sh
-docker run radixgraph-exp -v $(pwd)/:/workspace/ radixgraph-exp /workspace/run.sh
+docker run radixgraph-exp -v $./:/workspace/ radixgraph-exp /workspace/run.sh
 ```
 
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner

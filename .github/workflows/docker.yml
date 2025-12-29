@@ -23,4 +23,7 @@ jobs:
       
       - name: Run experiments with docker image
         run: |
-          docker run radixgraph-exp --rm -v $(pwd)/:/workspace/ radixgraph-exp /workspace/minimal-example/run_minimal.sh
+          docker run --rm \
+            -v ${{ github.workspace }}/minimal-example:/workspace/minimal-example \
+            radixgraph-exp \
+            /workspace/minimal-example/run_minimal.sh
