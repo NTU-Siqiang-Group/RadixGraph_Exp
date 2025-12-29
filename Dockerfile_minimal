@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     libboost-all-dev \
     zlib1g-dev \
     sqlite3 libsqlite3-dev \
+    libpapi-dev \
     python3 python3-pip python3-dev \
     wget curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -48,10 +49,6 @@ WORKDIR /workspace/gfe_driver
 RUN python3 downloader.py --download-lj-only && \
   sed -i -E 's/[[:space:]]+/ /g' datasets/*.txt && \
   mv datasets/com-lj.ungraph.txt datasets/com-lj.ungraph.el
-
-# Remove duplicate edges (as in notebook)
-RUN g++ scripts/remove_duplicate_edges.cpp -O3 -o remove_duplicate_edges || true && \
-    ./remove_duplicate_edges ./datasets/twitter-2010.el || true
 
 # ----------------------------
 # Configure GFE Driver
