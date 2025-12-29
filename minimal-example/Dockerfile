@@ -63,8 +63,12 @@ RUN echo "=== datasets after download ===" && \
 # Generate property files
 # ----------------------------
 WORKDIR /workspace/gfe_driver
-RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
-    ./generate_property_files datasets/com-lj.ungraph.el
+RUN echo "=== datasets after remove_duplicate_edges ===" && \
+    ls -lah datasets && \
+    g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
+    ./generate_property_files datasets/com-lj.ungraph.el && \
+    echo "=== datasets after generate_property_files ===" && \
+    ls -lah datasets
 
 # ----------------------------
 # Generate graphlog
