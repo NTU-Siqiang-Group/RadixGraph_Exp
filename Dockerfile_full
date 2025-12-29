@@ -44,11 +44,11 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 && \
 # ----------------------------
 # Python dependencies
 # ----------------------------
-RUN pip3 install --no-cache-dir \
-    tqdm \
-    matplotlib \
-    numpy \
-    pandas
+RUN apt-get install -y \
+    python3-tqdm \
+    python3-matplotlib \
+    python3-numpy \
+    python3-pandas
 
 # ----------------------------
 # Clone experiment repository
@@ -148,7 +148,7 @@ WORKDIR /workspace/gfe_driver
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -157,7 +157,7 @@ RUN sh scripts/run_concurrent.sh radixgraph 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -166,7 +166,7 @@ RUN sh scripts/run_concurrent.sh radixgraph 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 
 # ----------------------------
 # Build Spruce
@@ -210,7 +210,7 @@ WORKDIR /workspace/gfe_driver
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -219,7 +219,7 @@ RUN sh scripts/run_concurrent.sh bvgt 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -228,11 +228,11 @@ RUN sh scripts/run_concurrent.sh bvgt 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 
 # ----------------------------
 # For the rest of experiments, disable twitter dataset
@@ -279,7 +279,7 @@ WORKDIR /workspace/gfe_driver
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -288,7 +288,7 @@ RUN sh scripts/run_concurrent.sh teseo 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -297,11 +297,11 @@ RUN sh scripts/run_concurrent.sh teseo 64 && \
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 RUN sed -i \
   -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
   -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-  gfe_driver/configuration.hpp
+  configuration.hpp
 
 # ----------------------------
 # Build Sortledton
@@ -341,7 +341,7 @@ WORKDIR /workspace/gfe_driver
 RUN sed -i \
     -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
     -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
-    gfe_driver/configuration.hpp
+    configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -350,7 +350,7 @@ RUN sh scripts/run_concurrent.sh sortledton 64 && \
 RUN sed -i \
     -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
     -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-    gfe_driver/configuration.hpp
+    configuration.hpp
 WORKDIR /workspace/gfe_driver/build
 RUN make -j
 WORKDIR /workspace/gfe_driver
@@ -359,11 +359,11 @@ RUN sh scripts/run_concurrent.sh sortledton 64 && \
 RUN sed -i \
     -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
     -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-    gfe_driver/configuration.hpp
+    configuration.hpp
 RUN sed -i \
     -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
     -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
-    gfe_driver/configuration.hpp
+    configuration.hpp
 
 # ----------------------------
 # Default shell
