@@ -75,7 +75,7 @@ RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
 # ----------------------------
 # Build RadixGraph
 # ----------------------------
-WORKDIR /workspace/gfe_driver/library/radixgraph
+WORKDIR /workspace/gfe_driver/library/radixgraph/RadixGraph
 RUN git submodule update --init --recursive && \
     cmake -S . -DCMAKE_BUILD_TYPE=Release && \
     make -j && \
