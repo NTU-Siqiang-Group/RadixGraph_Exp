@@ -2,6 +2,9 @@
 
 Reproduce RadixGraph experimental results using Docker.
 
+RadixGraph repo: [https://github.com/ForwardStar](https://github.com/ForwardStar)
+GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_driver](https://github.com/ForwardStar/gfe_driver)
+
 # Build the minimal Docker image
 
 This image only tests the LiveJournal dataset experiments.

@@ -66,34 +66,11 @@ RUN g++ scripts/create_vertex_ops.cpp -o create_vertex_ops -O3 && \
     ./create_vertex_ops
 
 # ----------------------------
-# Generate graphlog
-# ----------------------------
-WORKDIR /workspace/gfe_driver
-RUN git clone https://github.com/MordorsElite/graphlog-base.git && \
-    cd graphlog-base && \
-    git submodule update --init && \
-    mkdir build && \
-    cd build && \
-    cmake ../ -DCMAKE_BUILD_TYPE=Release && \
-    make -j
-WORKDIR gfe_driver/graphlog-base/build
-RUN ./graphlog -a 1 -e 1 -v 1 ../../datasets/graph500-24.properties ../../graph500-24-delete.graphlog && \
-    ./graphlog -a 1 -e 1 -v 1 ../../datasets/uniform-24.properties ../../uniform-24-delete.graphlog && \
-    ./graphlog -a 10 -e 1 -v 1 ../../datasets/graph500-24.properties ../../graph500-24-1.0.graphlog && \
-    ./graphlog -a 10 -e 1 -v 1 ../../datasets/uniform-24.properties ../../uniform-24-1.0.graphlog && \
-    ./graphlog -a 10 -e 1 -v 1 ../../datasets/dota-league.properties ../../dota-league.graphlog
-
-# ----------------------------
 # Generate property files
 # ----------------------------
 WORKDIR /workspace/gfe_driver
-RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
-    ./generate_property_files datasets/twitter-2010.el && \
-    ./generate_property_files datasets/com-lj.ungraph.el && \
-    ./generate_property_files datasets/com-orkut.ungraph.el && \
-    ./generate_property_files datasets/graph500-24.e && \
-    ./generate_property_files datasets/uniform-24.e && \
-    ./generate_property_files datasets/dota-league.e
+RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && 
+    ./generate_property_files datasets/com-lj.ungraph.el
 
 # ----------------------------
 # Build RadixGraph
