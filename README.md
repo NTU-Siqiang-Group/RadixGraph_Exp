@@ -1,6 +1,6 @@
 # RadixGraph_Exp
 
-Reproduce RadixGraph experimental results using Docker.
+This is the repository for reproducing experimental results in the paper: [RadixGraph: A Fast, Space-Optimized Data Structure for Dynamic Graph Storage]() (accpeted by SIGMOD 2026).
 
 RadixGraph repo: [https://github.com/ForwardStar/RadixGraph](https://github.com/ForwardStar/RadixGraph)
 
