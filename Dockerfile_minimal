@@ -95,7 +95,7 @@ RUN git clone https://github.com/MordorsElite/graphlog-base.git && \
     cmake ../ -DCMAKE_BUILD_TYPE=Release && \
     make -j
 WORKDIR /workspace/gfe_driver/graphlog-base/build
-    ./graphlog -a 10 -e 1 -v 1 ../../datasets/dota-league.properties ../../dota-league.graphlog
+RUN ./graphlog -a 10 -e 1 -v 1 ../../datasets/dota-league.properties ../../dota-league.graphlog
 
 # ----------------------------
 # Generate property files
