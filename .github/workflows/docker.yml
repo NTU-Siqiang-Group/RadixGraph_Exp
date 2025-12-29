@@ -26,4 +26,4 @@ jobs:
           docker run --rm \
             -v ${{ github.workspace }}/minimal-example:/workspace/minimal-example \
             radixgraph-exp \
-            /workspace/minimal-example/run_minimal.sh
+            bash /workspace/minimal-example/run_minimal.sh
