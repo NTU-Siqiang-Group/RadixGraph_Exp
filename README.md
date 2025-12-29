@@ -6,6 +6,15 @@ RadixGraph repo: [https://github.com/ForwardStar/RadixGraph](https://github.com/
 
 GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_driver](https://github.com/ForwardStar/gfe_driver)
 
+## Minimum requirements
+To reproduce the full experiments, following are required:
+
+- CPU: at least supporting 64 threads;
+
+- Memory: >= 256G;
+
+- Disk: >= 512G.
+
 ## Reproduce RadixGraph with Docker
 
 There are two images you can build: ``radixgraph:minimal`` and ``radixgraph:full``. The ``minimal`` image only tests the LiveJournal dataset experiments, while the ``full`` image contains all datasets.
