@@ -69,7 +69,7 @@ RUN g++ scripts/create_vertex_ops.cpp -o create_vertex_ops -O3 && \
 # Generate property files
 # ----------------------------
 WORKDIR /workspace/gfe_driver
-RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && 
+RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
     ./generate_property_files datasets/com-lj.ungraph.el
 
 # ----------------------------
