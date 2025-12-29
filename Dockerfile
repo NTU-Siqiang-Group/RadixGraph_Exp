@@ -1,0 +1,224 @@
+# Reproducible environment for RadixGraph experiments
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+# ----------------------------
+# System dependencies
+# ----------------------------
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc-11 g++-11 \
+    cmake \
+    git \
+    libnuma-dev \
+    libevent-dev \
+    libboost-all-dev \
+    zlib1g-dev \
+    sqlite3 libsqlite3-dev \
+    python3 python3-pip python3-dev \
+    wget curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make gcc-11 / g++-11 default (matches notebook)
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+
+# ----------------------------
+# Python dependencies
+# ----------------------------
+RUN pip3 install --no-cache-dir \
+    tqdm \
+    matplotlib \
+    numpy
+
+# ----------------------------
+# Clone experiment repository
+# ----------------------------
+RUN git clone https://github.com/ForwardStar/gfe_driver.git
+
+WORKDIR /workspace/gfe_driver
+
+# ----------------------------
+# Dataset preparation
+# ----------------------------
+# Full dataset pipeline (very slow).
+# Comment this out if you want to prepare datasets manually at runtime.
+RUN bash scripts/prepare_datasets.sh || true
+
+# Remove duplicate edges (as in notebook)
+RUN g++ scripts/remove_duplicate_edges.cpp -O3 -o remove_duplicate_edges || true && \
+    ./remove_duplicate_edges ./datasets/twitter-2010.el || true
+
+# ----------------------------
+# Configure GFE Driver
+# ----------------------------
+RUN git submodule update --init && \
+    mkdir build && \
+    cd build && \
+    autoreconf -iv ..
+
+# ----------------------------
+# Generate vertex operations
+# ----------------------------
+WORKDIR /workspace/gfe_driver
+RUN g++ scripts/create_vertex_ops.cpp -o create_vertex_ops -O3 && \
+    ./create_vertex_ops
+
+# ----------------------------
+# Generate graphlog
+# ----------------------------
+WORKDIR /workspace/gfe_driver
+RUN git clone https://github.com/MordorsElite/graphlog-base.git && \
+    cd graphlog-base && \
+    git submodule update --init && \
+    mkdir build && \
+    cd build && \
+    cmake ../ -DCMAKE_BUILD_TYPE=Release && \
+    make -j
+WORKDIR gfe_driver/graphlog-base/build
+RUN ./graphlog -a 1 -e 1 -v 1 ../../datasets/graph500-24.properties ../../graph500-24-delete.graphlog && \
+    ./graphlog -a 1 -e 1 -v 1 ../../datasets/uniform-24.properties ../../uniform-24-delete.graphlog && \
+    ./graphlog -a 10 -e 1 -v 1 ../../datasets/graph500-24.properties ../../graph500-24-1.0.graphlog && \
+    ./graphlog -a 10 -e 1 -v 1 ../../datasets/uniform-24.properties ../../uniform-24-1.0.graphlog && \
+    ./graphlog -a 10 -e 1 -v 1 ../../datasets/dota-league.properties ../../dota-league.graphlog
+
+# ----------------------------
+# Generate property files
+# ----------------------------
+WORKDIR /workspace/gfe_driver
+RUN g++ scripts/generate_property_files.cpp -o generate_property_files -O3 && \
+    ./generate_property_files datasets/twitter-2010.el && \
+    ./generate_property_files datasets/com-lj.ungraph.el && \
+    ./generate_property_files datasets/com-orkut.ungraph.el && \
+    ./generate_property_files datasets/graph500-24.e && \
+    ./generate_property_files datasets/uniform-24.e && \
+    ./generate_property_files datasets/dota-league.e
+
+# ----------------------------
+# Build RadixGraph
+# ----------------------------
+WORKDIR /workspace/gfe_driver/library/radixgraph
+RUN git submodule update --init --recursive && \
+    cmake -S . -DCMAKE_BUILD_TYPE=Release && \
+    make -j && \
+    g++ optimizer.cpp -o optimizer -O3 && \
+    mv optimizer ../../../ && \
+    cd ../../../build && \
+    ../configure --enable-optimize --disable-debug --enable-mem-analysis --with-radixgraph=../library/radixgraph/RadixGraph && \
+    make clean && make -j
+
+# ----------------------------
+# Run RadixGraph experiments
+# ----------------------------
+# (1) Insertions, Deletions and Memory Consumptions
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_random.sh radixgraph 64
+RUN sh scripts/run_vertex.sh radixgraph 64
+
+# (2) Mixed updates and delete-only
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_mixed.sh radixgraph 64
+RUN sh scripts/run_delete_memfp.sh radixgraph 2
+
+# (3) Analytics
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_analytics.sh radixgraph 64
+
+# (4) Concurrent reads and writes
+WORKDIR /workspace/gfe_driver
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
+  gfe_driver/configuration.hpp
+WORKDIR /workspace/gfe_driver/build
+RUN make -j
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_concurrent.sh radixgraph 64 && \
+  mv results/radixgraph/concurrent results/radixgraph/concurrent-1-hop
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
+  gfe_driver/configuration.hpp
+WORKDIR /workspace/gfe_driver/build
+RUN make -j
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_concurrent.sh radixgraph 64 && \
+  mv results/radixgraph/concurrent results/radixgraph/concurrent-2-hop
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
+  gfe_driver/configuration.hpp
+
+# ----------------------------
+# Build Spruce
+# ----------------------------
+# Firstly install junction
+WORKDIR /workspace/gfe_driver
+RUN git clone https://github.com/preshing/junction.git && \
+    git clone https://github.com/preshing/turf.git && \
+    cd junction && \
+    mkdir build && \
+    cd build && \
+    cmake -DJUNCTION_WITH_SAMPLES=OFF .. && \
+    make install
+# Then build spruce
+WORKDIR /workspace/gfe_driver
+RUN wget -c https://github.com/Stardust-SJF/gfe_driver/releases/download/v2.0.0/libBVGT_stable.a && \
+    mv libBVGT_stable.a libBVGT.a
+RUN cd build && \
+    ../configure --enable-optimize --enable-mem-analysis --disable-debug --with-bvgt=../
+RUN make clean && make -j
+
+# ----------------------------
+# Run Spruce experiments
+# ----------------------------
+# (1) Insertions, Deletions and Memory Consumptions
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_random.sh bvgt 64
+RUN sh scripts/run_vertex.sh bvgt 64
+
+# (2) Mixed updates and delete-only
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_mixed.sh bvgt 64
+RUN sh scripts/run_delete_memfp.sh bvgt 2
+
+# (3) Analytics
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_analytics.sh bvgt 64
+
+# (4) Concurrent reads and writes
+WORKDIR /workspace/gfe_driver
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 0/' \
+  gfe_driver/configuration.hpp
+WORKDIR /workspace/gfe_driver/build
+RUN make -j
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_concurrent.sh bvgt 64 && \
+  mv results/bvgt/concurrent results/bvgt/concurrent-1-hop
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 0/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
+  gfe_driver/configuration.hpp
+WORKDIR /workspace/gfe_driver/build
+RUN make -j
+WORKDIR /workspace/gfe_driver
+RUN sh scripts/run_concurrent.sh bvgt 64 && \
+  mv results/bvgt/concurrent results/bvgt/concurrent-2-hop
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
+  gfe_driver/configuration.hpp
+RUN sed -i \
+  -e 's/^#define[[:space:]]\+RUN_GET_NEIGHBORS[[:space:]]\+[01]/#define RUN_GET_NEIGHBORS 1/' \
+  -e 's/^#define[[:space:]]\+RUN_TWO_HOP_NEIGHBORS[[:space:]]\+[01]/#define RUN_TWO_HOP_NEIGHBORS 1/' \
+  gfe_driver/configuration.hpp
+
+# ----------------------------
+# Default shell
+# ----------------------------
+WORKDIR /workspace/gfe_driver
+CMD ["/bin/bash"]
