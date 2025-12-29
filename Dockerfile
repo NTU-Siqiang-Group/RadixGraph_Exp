@@ -47,11 +47,13 @@ RUN git clone https://github.com/ForwardStar/gfe_driver.git
 # ----------------------------
 # Full dataset pipeline (very slow).
 # Comment this out if you want to prepare datasets manually at runtime.
-RUN bash scripts/prepare_datasets.sh || true
+WORKDIR /workspace/gfe_driver
+RUN bash scripts/prepare_datasets.sh
 
 # Remove duplicate edges (as in notebook)
-RUN g++ scripts/remove_duplicate_edges.cpp -O3 -o remove_duplicate_edges || true && \
-    ./remove_duplicate_edges ./datasets/twitter-2010.el || true
+WORKDIR /workspace/gfe_driver
+RUN g++ scripts/remove_duplicate_edges.cpp -O3 -o remove_duplicate_edges && \
+    ./remove_duplicate_edges ./datasets/twitter-2010.el
 
 # ----------------------------
 # Generate graphlog
