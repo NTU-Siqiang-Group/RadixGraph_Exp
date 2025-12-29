@@ -23,4 +23,4 @@ jobs:
       
       - name: Run experiments with docker image
         run: |
-          docker run --rm -it radixgraph-exp ./minimal-example/run.sh
+          docker run --rm radixgraph-exp ./minimal-example/run.sh
