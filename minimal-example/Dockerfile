@@ -149,6 +149,7 @@ RUN /bin/bash -c " \
     if [ \"\$HAS_NUMA\" -eq 1 ]; then \
         git clone https://github.com/cwida/teseo && \
         cd teseo && \
+        sed -i 's/@conf_numa_num_nodes@/1/' include/teseo/context/static_configuration.hpp.in && \
         autoreconf -iv && \
         mkdir build && cd build && \
         ../configure --enable-optimize --disable-debug && \

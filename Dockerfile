@@ -146,6 +146,7 @@ RUN cd build && \
 WORKDIR /workspace/gfe_driver
 RUN git clone https://github.com/cwida/teseo && \
     cd teseo && \
+    sed -i 's/@conf_numa_num_nodes@/1/' include/teseo/context/static_configuration.hpp.in && \
     autoreconf -iv && \
     mkdir build && \
     cd build && \
