@@ -1,33 +1,31 @@
-# RadixGraph_Docker
+# RadixGraph_Exp
 
 Reproduce RadixGraph experimental results using Docker.
 
-RadixGraph repo: [https://github.com/ForwardStar](https://github.com/ForwardStar)
+RadixGraph repo: [https://github.com/ForwardStar/RadixGraph](https://github.com/ForwardStar/RadixGraph)
 
 GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_driver](https://github.com/ForwardStar/gfe_driver)
 
-# Build the minimal Docker image
+# Reproduce RadixGraph with Docker
 
-This image only tests the LiveJournal dataset experiments.
+There are two images you can build: ``radixgraph:minimal`` and ``radixgraph:full``. The ``minimal`` image only tests the LiveJournal dataset experiments, while the ``full`` image contains all datasets.
 
+Build:
 ```bash
 docker build -f Dockerfile_minimal -t radixgraph:minimal .
-```
-
-# Build the full Docker image
-
-This image includes all datasets and experiments. It might take days to finish.
-
-```bash
 docker build -f Dockerfile_full -t radixgraph:full .
 ```
 
-# Run whichever image you want
+Run whichever image you want:
 ```bash
 docker run -it radixgraph:minimal
-```
-
-or:
-```bash
 docker run -it radixgraph:full
 ```
+
+# Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
+
+You can also reproduce the experiments with ``reproduce_radixgraph.ipynb`` in a Jupyter Notebook, which gives more detailed instructions and explanations.
+
+# Reproduce RadixGraph manually
+
+Refer to READMEs in [GFE Driver for RadixGraph](https://github.com/ForwardStar/gfe_driver) and [RadixGraph](https://github.com/ForwardStar/RadixGraph) to manually reproduce the experimental results.
