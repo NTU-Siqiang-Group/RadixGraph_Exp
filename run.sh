@@ -79,9 +79,9 @@ mv gfe_driver gfe_driver_bvgt && mv Makefile Makefile_bvgt
 # For the rest of experiments, disable twitter dataset
 # ----------------------------
 cd /workspace/gfe_driver
-sed -i '46s/^/# /' run_random.sh
-sed -i '46s/^/# /' run_vertex.sh
-sed -i '46s/^/# /' run_analytics.sh
+sed -i '46s/^/# /' scripts/run_random.sh
+sed -i '46s/^/# /' scripts/run_vertex.sh
+sed -i '46s/^/# /' scripts/run_analytics.sh
 
 # ----------------------------
 # Run Teseo experiments
