@@ -29,14 +29,23 @@ Create directories for the dataset cache and results:
 mkdir -p data output
 ```
 
+If these directories were created by an earlier root container, repair their ownership once:
+
+```sh
+docker run --rm --user 0:0 \
+  --mount type=bind,source="$PWD/data",target=/data \
+  --mount type=bind,source="$PWD/output",target=/output \
+  radixgraph-exp chown -R "$(id -u):$(id -g)" /data /output
+```
+
 ### Run full experiments
 
 Run all paper experiments and generate the figures and tables:
 ```sh
 docker run --rm --init --stop-timeout 60 \
   --user "$(id -u):$(id -g)" \
-  -v "$PWD/data:/data" \
-  -v "$PWD/output:/output" \
+  --mount type=bind,source="$PWD/data",target=/data \
+  --mount type=bind,source="$PWD/output",target=/output \
   radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper --stages all
 ```
 
@@ -50,8 +59,8 @@ Alternatively, after building the image and creating `data/` and `output/`, defi
 run_radixgraph() {
   docker run --rm --init --stop-timeout 60 \
     --user "$(id -u):$(id -g)" \
-    -v "$PWD/data:/data" \
-    -v "$PWD/output:/output" \
+    --mount type=bind,source="$PWD/data",target=/data \
+    --mount type=bind,source="$PWD/output",target=/output \
     radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper "$@"
 }
 ```
