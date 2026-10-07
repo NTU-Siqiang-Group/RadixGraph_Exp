@@ -1,6 +1,6 @@
 # RadixGraph_Exp
 
-This is the repository for reproducing experimental results in the paper: [RadixGraph: A Fast, Space-Optimized Data Structure for Dynamic Graph Storage]() (accepted by SIGMOD 2026).
+This is the repository for reproducing experimental results in the paper: [RadixGraph: A Fast, Space-Optimized Data Structure for Dynamic Graph Storage](https://arxiv.org/pdf/2601.01444) (accepted by SIGMOD 2026).
 
 RadixGraph repo: [https://github.com/ForwardStar/RadixGraph](https://github.com/ForwardStar/RadixGraph)
 
@@ -17,15 +17,78 @@ To reproduce the full experiments, following are required:
 
 ## Reproduce RadixGraph with Docker
 
-Firstly build the image:
+Run the following commands from the repository root.
+
+Build the image:
 ```sh
-docker build -t radixgraph-exp .
+docker build --build-arg BUILD_JOBS=2 -t radixgraph-exp .
 ```
 
-Run full experiments:
+Create directories for the dataset cache and results:
 ```sh
-docker run radixgraph-exp -v ./:/workspace/exp radixgraph-exp bash /workspace/exp/run.sh
+mkdir -p data output
 ```
+
+### Run full experiments
+
+Run all paper experiments and generate the figures and tables:
+```sh
+docker run --rm --init --stop-timeout 60 \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/data:/data" \
+  -v "$PWD/output:/output" \
+  radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper --stages all
+```
+
+Find the generated figures in `output/<UTC-run-id>/figures/` and tables in `output/<UTC-run-id>/tables/`.
+
+### Run the experiments stage by stage
+
+Alternatively, after building the image and creating `data/` and `output/`, define this helper in Bash from the repository root:
+
+```sh
+run_radixgraph() {
+  docker run --rm --init --stop-timeout 60 \
+    --user "$(id -u):$(id -g)" \
+    -v "$PWD/data:/data" \
+    -v "$PWD/output:/output" \
+    radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper "$@"
+}
+```
+
+Run these stages in order:
+
+```sh
+# 1. Download datasets, preprocess inputs and generate graphlogs.
+run_radixgraph --stages prepare
+
+# 2. Run the GFE benchmarks for Figures 8–11.
+run_radixgraph --stages main --skip-prepare
+
+# 3. Run case studies and batch updates for Figures 12–13 and Tables 5–7.
+run_radixgraph --stages studies,batch --skip-prepare
+```
+
+Each invocation creates a new `output/<UTC-run-id>/` and prints its path. All stages reuse the same `data/` cache, and figures and tables are exported automatically after each invocation.
+
+To regenerate figures and tables from an existing run without rerunning experiments, replace `<UTC-run-id>` with that run's directory name:
+
+```sh
+run_radixgraph --stages report --run-dir "/output/<UTC-run-id>"
+```
+
+Existing run directories can be reused only for `report`; experiment stages always write to a new directory.
+
+### Estimated runtime
+
+Allow approximately **3–7 days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above.
+
+| Stage | Estimated time |
+| --- | --- |
+| Docker build, if needed | 30–90 minutes |
+| Download, preprocessing and graphlog generation | 4–24 hours |
+| All experiments | 2–6 days |
+| Plotting and table export | A few minutes |
 
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
 

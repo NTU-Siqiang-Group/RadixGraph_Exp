@@ -1,0 +1,8 @@
+.git
+**/__pycache__
+**/*.pyc
+data
+data-smoke
+output
+output-smoke
+build-logs
