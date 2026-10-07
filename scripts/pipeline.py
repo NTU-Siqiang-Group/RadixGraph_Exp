@@ -241,6 +241,8 @@ def parser():
     result.add_argument("--skip-prepare", action="store_true", help="use an already prepared data cache")
     result.add_argument("--check-requirements", action="store_true",
                         help="check machine resources and exit without preparing data or running experiments")
+    result.add_argument("--force", action="store_true",
+                        help="continue despite unmet requirements, printing and recording the shortfalls")
     return result
 
 

@@ -1,5 +1,6 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,6 +92,45 @@ class RequirementsTests(unittest.TestCase):
         pipeline.assert_not_called()
         self.assertIn("[requirements] OK", output.getvalue())
         self.assertFalse(self.args.output_dir.exists())
+
+    def test_force_starts_experiments_and_records_shortfalls(self):
+        self.resources.update(cpu_threads=8, memory_bytes=32 * GB)
+        self.disk.return_value.free = 100 * GB
+        arguments = [*self.arguments, "--force", "--stages", "main", "--skip-prepare"]
+        with patch.object(sys, "argv", ["run.sh", *arguments]):
+            with patch("pipeline.Pipeline.run_main") as experiments, patch("pipeline.export", return_value=[]):
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(main(), 0)
+        experiments.assert_called_once()
+        manifest = json.loads(next(self.args.output_dir.glob("*/manifest.json")).read_text())
+        self.assertTrue(manifest["config"]["force"])
+        self.assertEqual(manifest["requirements"]["status"], "forced")
+        self.assertEqual(len(manifest["requirements"]["unmet_requirements"]), 3)
+        for expected in ("--force", "8 usable", "32.0 GB", "100.0 GB"):
+            self.assertIn(expected, output.getvalue())
+
+    def test_force_check_only_handles_unknown_resources_without_starting_work(self):
+        self.resources.update(cpu_threads=None, memory_bytes=None)
+        arguments = [*self.arguments, "--force", "--check-requirements"]
+        with patch.object(sys, "argv", ["run.sh", *arguments]), patch("pipeline.Pipeline") as pipeline:
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(main(), 0)
+        pipeline.assert_not_called()
+        self.assertIn("cannot determine", output.getvalue())
+        self.assertNotIn("[requirements] OK", output.getvalue())
+        self.assertFalse(self.args.output_dir.exists())
+
+    def test_force_does_not_suppress_experiment_failures(self):
+        self.resources["cpu_threads"] = 4
+        arguments = [*self.arguments, "--force", "--stages", "main", "--skip-prepare"]
+        with patch.object(sys, "argv", ["run.sh", *arguments]):
+            with patch("pipeline.Pipeline.run_main", side_effect=RuntimeError("experiment failed")):
+                with patch("pipeline.export", return_value=[]), redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(), 1)
+        manifest = json.loads(next(self.args.output_dir.glob("*/manifest.json")).read_text())
+        self.assertEqual(manifest["requirements"]["status"], "forced")
+        self.assertEqual(manifest["jobs"][-1]["status"], "failed")
+        self.assertEqual(manifest["jobs"][-1]["reason"], "experiment failed")
 
     def test_allocated_cache_ignores_hardlink_duplicates_and_symlink_targets(self):
         self.args.data_dir.mkdir()

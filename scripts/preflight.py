@@ -50,7 +50,7 @@ def allocated_cache_bytes(path):
 
 
 def check_requirements(args):
-    """Return measured resources or raise one error listing every shortfall."""
+    """Return measured resources; reject shortfalls unless --force is set."""
     if args.profile != "paper" or set(args.stages) == {"report"}:
         return {"status": "skipped", "reason": "full-paper minimums do not apply to smoke or report-only runs"}
 
@@ -91,6 +91,9 @@ def check_requirements(args):
             errors.append(f"{label} at {destination}: {error}")
 
     if errors:
+        if args.force:
+            measured.update(status="forced", unmet_requirements=errors)
+            return measured
         raise RequirementsError("Minimum requirements not satisfied:\n" +
                                 "\n".join("  - " + error for error in errors) +
                                 "\nNo datasets were downloaded and no experiments were started.")
@@ -99,6 +102,10 @@ def check_requirements(args):
 
 
 def print_requirements(measured):
+    if measured["status"] == "forced":
+        print("[requirements] WARNING: --force overrides unmet requirements:\n" +
+              "\n".join("  - " + error for error in measured["unmet_requirements"]), flush=True)
+        return
     if measured["status"] == "skipped":
         print("[requirements] " + measured["reason"], flush=True)
         return

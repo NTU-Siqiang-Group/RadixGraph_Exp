@@ -105,6 +105,18 @@ Allow approximately **3–7 days for the first full run** on a 64-thread Xeon se
 | All experiments | 2–6 days |
 | Plotting and table export | A few minutes |
 
+### Bypass requirement checks
+
+To bypass CPU, RAM or disk requirements, add `--force`:
+
+```sh
+run_radixgraph --stages all --force
+```
+
+For the full `docker run` command, append `--force` after `--stages all`.
+
+We recommend meeting the requirements; forced runs may fail or produce incomplete results.
+
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
 
 You can also reproduce the experiments with ``reproduce_radixgraph.ipynb`` in a Jupyter Notebook, which gives more detailed instructions and explanations.
