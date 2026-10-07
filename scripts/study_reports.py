@@ -1,4 +1,4 @@
-"""Parse measured standalone results into CSV and Markdown artifacts.
+"""Parse measured standalone results into CSV artifacts.
 
 No paper numbers are embedded here. Missing/failed measurements retain empty
 cells and explicit status, with a source log for every row. Units use binary
@@ -132,22 +132,6 @@ def _write_csv(path, rows, fields):
         writer.writerows(rows)
 
 
-def _display(value):
-    if value is None or value == "":
-        return "—"
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    return str(value).replace("|", "\\|").replace("\n", " ")
-
-
-def _write_markdown(path, rows, fields, title, notes):
-    lines = [title, "", notes, "", "| " + " | ".join(fields) + " |",
-             "| " + " | ".join("---" for _ in fields) + " |"]
-    for row in rows:
-        lines.append("| " + " | ".join(_display(row.get(key)) for key in fields) + " |")
-    path.write_text("\n".join(lines) + "\n")
-
-
 def _ratio(numerator, denominator):
     if numerator is None or denominator is None or denominator <= 0:
         return None
@@ -155,7 +139,7 @@ def _ratio(numerator, denominator):
 
 
 def render_study_reports(output, records=None):
-    """Regenerate CSV/Markdown artifacts from saved logs only."""
+    """Regenerate CSV artifacts from saved logs only."""
     output = Path(output).resolve()
     if records is None:
         index = output / "studies" / "records.json"
@@ -235,8 +219,6 @@ def render_study_reports(output, records=None):
 
     fields5 = ["n", "bits", "method", "insert_ops_s", "query_ops_s", "memory_kib", "status", "source_log"]
     _write_csv(tables / "table5.csv", table5, fields5)
-    _write_markdown(tables / "table5.md", table5, fields5, "Table 5: SORT and ART vertex indexes",
-                    "Throughputs are operations/second; memory is measured RSS delta in KiB. Empty cells are unavailable measurements.")
     fields_updates = ["dataset", "variant", "insert_seconds", "delete_seconds", "memory_kib", "status", "source_log"]
     fields_analytics = ["dataset", "variant", "two_hop_seconds", "bfs_seconds", "sssp_seconds", "bc_seconds", "status", "source_log"]
     _write_csv(tables / "table6_updates.csv", update_rows, fields_updates)
@@ -265,8 +247,6 @@ def render_study_reports(output, records=None):
         table6.append(row)
     fields6 = ["dataset", *ratio_fields, "status", "source_logs"]
     _write_csv(tables / "table6.csv", table6, fields6)
-    _write_markdown(tables / "table6.md", table6, fields6, "Table 6: RadixGraph ablations",
-                    "Ratios are ART/SORT elapsed time or RSS delta, and no-edge-chain/edge-chain elapsed time. Ratios require both successful source runs. Raw seconds and KiB are in table6_updates.csv and table6_analytics.csv.")
     fields7 = ["dataset", "method", "batch_size", "insert_ops_s", "delete_ops_s", "memory_gib", "status", "source_log"]
     _write_csv(tables / "table7_radixgraph.csv", table7, fields7)
     baseline_file = tables / "table7_baselines.csv"
@@ -274,22 +254,14 @@ def render_study_reports(output, records=None):
         with baseline_file.open(newline="") as handle:
             table7.extend(csv.DictReader(handle))
     _write_csv(tables / "table7.csv", table7, fields7)
-    _write_markdown(tables / "table7.md", table7, fields7, "Table 7: Batch updates",
-                    "Throughputs are operations/second. The paper profile averages 20 insert/delete trials; smoke baseline runs use fewer trials. Memory is the measured graph-load RSS delta in GiB, repeated across batch sizes. Raw logs record the run protocol; this is measured resident memory rather than theoretical graph size.")
     fanout_rows = [{**row, "fanout": " ".join(map(str, row["fanout"]))} for row in configurations]
     _write_csv(tables / "figure12_fanouts.csv", fanout_rows, ["n", "fanout", "source_log"])
     _write_csv(tables / "figure12_memory_costs.csv", memory_costs, ["n", "variant", "fanout", "memory_bytes", "status", "source_log"])
     _write_csv(tables / "figure12_memory_footprint.csv", memory_points, ["n", "memory_bytes", "source_log"])
     _write_csv(tables / "figure12_transformations.csv", transformations, ["n", "seconds", "source_log"])
     _write_csv(tables / "figure13_workloads.csv", workload_points, ["workload", "method", "n", "fraction", "memory_bytes", "status", "source_log"])
-    _write_markdown(tables / "figure12_fanouts.md", fanout_rows, ["n", "fanout", "source_log"],
-                    "Figure 12(a): SORT fanout changes", "Measured optimizer change points; each fanout contains five bit widths.")
-    _write_markdown(tables / "figure12_memory_costs.md", memory_costs,
-                    ["n", "variant", "fanout", "memory_bytes", "status", "source_log"],
-                    "Figure 12(b): Memory costs", "Measured allocated tree memory in bytes.")
-    _write_markdown(tables / "figure12_transformations.md", transformations, ["n", "seconds", "source_log"],
-                    "Figure 12(d): Transformation costs",
-                    "Measured transformation times. The upstream repositories do not provide a renderer for this panel; its results are retained as a table.")
+    for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
+        (tables / f"{name}.md").unlink(missing_ok=True)
     for label, rows in (("table5", table5), ("table6", table6), ("table7", table7), ("figure12", memory_costs)):
         for row in rows:
             if row.get("status") != "ok":

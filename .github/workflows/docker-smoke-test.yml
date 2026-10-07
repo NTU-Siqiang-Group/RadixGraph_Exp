@@ -1,0 +1,95 @@
+name: docker-smoke-test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build smoke-test Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: radixgraph-exp:smoke-test
+          build-args: BUILD_JOBS=2
+          cache-from: type=gha,scope=docker-smoke-test
+          cache-to: type=gha,scope=docker-smoke-test,mode=max
+
+      - name: Run all smoke experiments
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p data-smoke output-smoke
+          # Compression of a newly generated smoke graphlog takes several minutes.
+          docker run --rm --init --stop-timeout 60 \
+            --user "$(id -u):$(id -g)" \
+            --mount type=bind,source="$PWD/data-smoke",target=/data \
+            --mount type=bind,source="$PWD/output-smoke",target=/output \
+            radixgraph-exp:smoke-test bash /opt/radixgraph-exp/run.sh \
+            --profile smoke --stages all --threads 2 --timeout-hours 0.25 \
+            --run-dir /output/smoke 2>&1 | tee smoke-test.log
+
+      - name: Check smoke results
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          run = Path("output-smoke/smoke")
+          manifest = json.loads((run / "manifest.json").read_text())
+          coverage = json.loads((run / "coverage.json").read_text())
+          artifacts = json.loads((run / "artifacts.json").read_text())
+          assert manifest["profile"] == "smoke", manifest["profile"]
+          assert manifest["status"] == "finished", manifest["status"]
+          assert manifest["jobs"], "No smoke experiments were recorded"
+          failed = [job["name"] for job in manifest["jobs"] if job["status"] != "ok"]
+          assert not failed, failed
+          assert coverage["full_experiment_scope"], coverage
+          assert not coverage["missing_artifacts"], coverage["missing_artifacts"]
+          for artifact in coverage["expected_artifacts"]:
+              path = run / artifact
+              assert path.is_file() and path.stat().st_size > 0, artifact
+          for number in (5, 6, 7):
+              assert f"figures/table{number}.pdf" in artifacts, number
+          for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
+              assert not (run / "tables" / f"{name}.md").exists(), name
+          assert not list((run / "figures").glob("table*.png")), "Unexpected table PNGs"
+          print(f"Smoke test passed: {len(manifest['jobs'])} jobs; all expected artifacts retained.")
+          PY
+
+      - name: Upload smoke results and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-smoke-test-results
+          path: |
+            output-smoke/
+            smoke-test.log
+          if-no-files-found: warn
+          retention-days: 14

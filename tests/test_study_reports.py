@@ -180,7 +180,9 @@ Batch size: 10, average insert throughput: 1e6 ops/s, average delete throughput:
             self.assertEqual(row["no_chain_two_hop_ratio"], "3.0")
             self.assertEqual(row["status"], "ok")
             self.assertEqual(report["rows"]["table7"], 1)
-            self.assertIn("Terrace", (root / "tables" / "table7.md").read_text())
+            with (root / "tables" / "table7.csv").open() as handle:
+                self.assertEqual(next(csv.DictReader(handle))["method"], "Terrace")
+            self.assertFalse((root / "tables" / "table7.md").exists())
             # A failed input is explicit and may not generate a ratio.
             records[1]["status"] = "failed"
             render_study_reports(root, records)
@@ -213,14 +215,21 @@ Batch size: 10, average insert throughput: 1e6 ops/s, average delete throughput:
                                          for method in ("SORT", "vEB") for n in range(1000, 10001, 1000)))
                 records.append({"status": "ok", "log": str(log),
                                 "metadata": {"artifact": "figure13", "kind": "workload", "workload": code, "n": 10000}})
+            (root / "tables").mkdir()
+            for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
+                (root / "tables" / f"{name}.md").write_text("Legacy table copy")
+            (root / "tables" / "table7_baselines_notes.md").write_text("Retained protocol notes")
             report = render_study_reports(root, records)
             self.assertFalse(report["issues"])
             self.assertEqual(report["figures"], [])
             self.assertFalse((root / "figures").exists())
             for name in ("figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
                 self.assertTrue((root / "tables" / f"{name}.csv").is_file())
-                self.assertTrue((root / "tables" / f"{name}.md").is_file())
-            self.assertIn("0.1", (root / "tables" / "figure12_transformations.md").read_text())
+                self.assertFalse((root / "tables" / f"{name}.md").exists())
+            self.assertEqual([path.name for path in (root / "tables").glob("*.md")], ["table7_baselines_notes.md"])
+            with (root / "tables" / "figure12_transformations.csv").open() as handle:
+                self.assertEqual(next(csv.DictReader(handle))["seconds"], "0.1")
+            self.assertEqual((root / "tables" / "table7_baselines_notes.md").read_text(), "Retained protocol notes")
             with (root / "tables" / "figure13_workloads.csv").open() as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 60)

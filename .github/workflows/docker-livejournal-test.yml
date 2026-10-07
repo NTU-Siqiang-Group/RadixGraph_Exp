@@ -1,4 +1,4 @@
-name: Docker-minimal
+name: docker-livejournal-test
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  docker-minimal:
+  docker-livejournal-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,7 +20,7 @@ jobs:
       - name: Build Docker image minimal example
         run: |
           docker build -t radixgraph-exp ./minimal-example
-      
+
       - name: Run experiments with docker image
         run: |
           docker run --rm \

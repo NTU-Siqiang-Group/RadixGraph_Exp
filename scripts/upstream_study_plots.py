@@ -79,7 +79,7 @@ def render_study_plots(output, radix, gfe, profile, runner):
     """Return metadata for original renderers run on measured study inputs.
 
     ``runner(script, cwd, input_text=None)`` executes a Python script and returns
-    a dictionary containing at least ``status``. CSV/Markdown export happens in
+    a dictionary containing at least ``status``. CSV export happens in
     ``study_reports.py`` before this adapter is called.
     """
     output, radix, gfe = Path(output).resolve(), Path(radix), Path(gfe)

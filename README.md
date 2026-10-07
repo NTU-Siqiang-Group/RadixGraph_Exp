@@ -17,6 +17,9 @@ To reproduce the full experiments, following are required:
 
 ## Reproduce RadixGraph with Docker
 
+[![docker-livejournal-test](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-livejournal-test.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-livejournal-test.yml)
+[![docker-smoke-test](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-smoke-test.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-smoke-test.yml)
+
 Run the following commands from the repository root.
 
 Build the image:
@@ -45,7 +48,7 @@ docker run --rm --init --stop-timeout 60 \
   radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper --stages all
 ```
 
-Find the generated figures in `output/<UTC-run-id>/figures/` and tables in `output/<UTC-run-id>/tables/`.
+Find plots and table PDFs are in `output/<UTC-run-id>/figures/`, and raw CSV results are in `output/<UTC-run-id>/tables/`.
 
 ### Run the experiments stage by stage
 
@@ -116,6 +119,10 @@ run_radixgraph --stages all --force
 For the full `docker run` command, append `--force` after `--stages all`.
 
 We recommend meeting the requirements; forced runs may fail or produce incomplete results.
+
+### Acknowledgment
+
+The Docker reproduction pipeline was largely developed and validated with assistance from [OpenAI Codex](https://openai.com/codex/).
 
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
 

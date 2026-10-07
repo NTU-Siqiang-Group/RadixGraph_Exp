@@ -261,6 +261,17 @@ def export(p):
                     p.note("report-" + name, "failed", reason)
         except Exception as error:
             p.note("report-" + name, "failed", str(error))
+    from table_figures import render_table_figures
+    try:
+        table_figures = render_table_figures(p.output)
+        for issue in table_figures["issues"]:
+            reason = str(issue)
+            if not any(j.get("reason") == reason for j in p.jobs):
+                p.note("report-table-figures", "failed", reason)
+    except Exception as error:
+        table_figures = dict(figures=[], tables=[], issues=[str(error)])
+        p.note("report-table-figures", "failed", str(error))
+    p.manifest["table_figures"] = table_figures
     from upstream_plots import render_original_plots
     plotting = render_original_plots(p.output, p.jobs, p.gfe, p.radix, p.profile)
     for issue in plotting["issues"]:
@@ -282,12 +293,15 @@ def export(p):
             expected.append("figures/figure11.pdf")
     if "studies" in stages:
         expected += ["figures/figure12_a.pdf", "figures/figure12_b.pdf", "figures/figure13.pdf",
-                     "tables/figure12_transformations.csv", "tables/figure12_transformations.md",
-                     "tables/table5.csv", "tables/table6.csv", "tables/table7.csv"]
+                     "tables/figure12_transformations.csv",
+                     "tables/table5.csv", "tables/table6.csv", "tables/table7.csv",
+                     "figures/table5.pdf", "figures/table6.pdf", "figures/table7.pdf"]
         if p.profile == "paper":
             expected.append("figures/figure12_c.pdf")
     if "batch" in stages:
         expected += ["tables/table7_baselines.csv", "tables/table7.csv"]
+        if "figures/table7.pdf" not in expected:
+            expected.append("figures/table7.pdf")
     missing = [path for path in expected if not (p.output / path).is_file()]
     for path in missing:
         if not any(j.get("name") == "missing-artifact-" + path for j in p.jobs):
@@ -297,8 +311,9 @@ def export(p):
     atomic_json(p.output / "coverage.json", dict(full_experiment_scope=full_scope, profile=p.profile,
                                                 expected_artifacts=expected, missing_artifacts=missing,
                                                 renderer="original upstream scripts",
+                                                table_renderer="paper-style measured tables",
                                                 plot_limitations=[r for r in plotting["plots"] if r["status"] == "skipped"],
-                                                table_only_panels=["Figure 12(d): no original renderer is provided; see tables/figure12_transformations.md"]))
+                                                table_only_panels=["Figure 12(d): no original renderer is provided; see tables/figure12_transformations.csv"]))
     failures = [j for j in p.jobs if j["status"] not in ("ok", "expected_omission")]
     p.manifest["finished_utc"] = datetime.now(timezone.utc).isoformat()
     p.manifest["status"] = "incomplete" if failures else "finished"
@@ -308,7 +323,8 @@ def export(p):
     (p.output / "artifacts.json").write_text(json.dumps(artifacts, indent=2) + "\n")
     lines = ["# RadixGraph reproduction run", "", f"Profile: **{p.profile}**. Status: **{p.manifest['status']}**.", "",
              "Coverage: **" + ("full experiment grid" if full_scope else "selected experiment subset") + "**; see [coverage.json](coverage.json).", "",
-             "Tables contain this run's measurements. Figures use the original upstream plotting scripts and their original axes/progress calculations.",
+             "CSV tables retain this run's full-precision measurements. Table PDFs in figures/ follow the paper's layout and contain only the table grid, headers and values.",
+             "Experimental plots use the original upstream plotting scripts and their original axes/progress calculations.",
              "See [plotting/manifest.json](plotting/manifest.json) for script hashes, inputs, execution logs, and retained upstream assumptions.",
              "The smoke profile verifies wiring with synthetic data; it is not a paper result.", "",
              "## Artifacts", ""] + [f"- [{a}]({a})" for a in artifacts]
