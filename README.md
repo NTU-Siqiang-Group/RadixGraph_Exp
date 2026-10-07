@@ -119,7 +119,7 @@ We recommend meeting the requirements; forced runs may fail or produce incomplet
 
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
 
-You can also reproduce the experiments with ``reproduce_radixgraph.ipynb`` in a Jupyter Notebook, which gives more detailed instructions and explanations.
+You can also reproduce the experiments with [``reproduce_radixgraph.ipynb``](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/blob/main/reproduce_radixgraph.ipynb) in a Jupyter Notebook, which gives more detailed instructions and explanations.
 
 It also provides a minimal example of testing on LiveJournal dataset.
 
