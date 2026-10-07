@@ -29,15 +29,6 @@ Create directories for the dataset cache and results:
 mkdir -p data output
 ```
 
-If these directories were created by an earlier root container, repair their ownership once:
-
-```sh
-docker run --rm --user 0:0 \
-  --mount type=bind,source="$PWD/data",target=/data \
-  --mount type=bind,source="$PWD/output",target=/output \
-  radixgraph-exp chown -R "$(id -u):$(id -g)" /data /output
-```
-
 ### Run full experiments
 
 Run all paper experiments and generate the figures and tables:
@@ -63,6 +54,12 @@ run_radixgraph() {
     --mount type=bind,source="$PWD/output",target=/output \
     radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper "$@"
 }
+```
+
+Check the machine without downloading data or running experiments:
+
+```sh
+run_radixgraph --check-requirements
 ```
 
 Run these stages in order:

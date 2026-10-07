@@ -239,6 +239,8 @@ def parser():
     result.add_argument("--systems", type=lambda v: split_names(v, SYSTEMS), default=list(SYSTEMS), help="GFE systems, comma-separated")
     result.add_argument("--datasets", type=lambda v: split_names(v, DATASETS), default=list(DATASETS), help="dataset stems, comma-separated")
     result.add_argument("--skip-prepare", action="store_true", help="use an already prepared data cache")
+    result.add_argument("--check-requirements", action="store_true",
+                        help="check machine resources and exit without preparing data or running experiments")
     return result
 
 
@@ -327,7 +329,19 @@ def export(p):
 
 def main():
     args = parser().parse_args()
+    from preflight import check_requirements, print_requirements, RequirementsError
+    try:
+        resources = check_requirements(args)
+    except RequirementsError as error:
+        print("ERROR: " + str(error), file=sys.stderr, flush=True)
+        return 2
+    print_requirements(resources)
+    if args.check_requirements:
+        return 0
     p = Pipeline(args)
+    if resources["status"] == "ok" or "requirements" not in p.manifest:
+        p.manifest["requirements"] = resources
+    p.save()
     print("Output directory: " + str(p.output), flush=True)
     stages = {"prepare", "main", "studies", "batch"} if "all" in args.stages else set(args.stages)
     exit_code = 0
