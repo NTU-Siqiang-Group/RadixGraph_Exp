@@ -33,8 +33,13 @@ mkdir -p data output
 
 Run all paper experiments and generate the figures and tables:
 ```sh
+docker_user="$(id -u):$(id -g)"
+if docker info --format '{{json .SecurityOptions}}' | grep -q rootless; then
+  docker_user=0:0
+fi
+
 docker run --rm --init --stop-timeout 60 \
-  --user "$(id -u):$(id -g)" \
+  --user "$docker_user" \
   --mount type=bind,source="$PWD/data",target=/data \
   --mount type=bind,source="$PWD/output",target=/output \
   radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper --stages all
@@ -48,8 +53,12 @@ Alternatively, after building the image and creating `data/` and `output/`, defi
 
 ```sh
 run_radixgraph() {
+  local docker_user="$(id -u):$(id -g)"
+  if docker info --format '{{json .SecurityOptions}}' | grep -q rootless; then
+    docker_user=0:0
+  fi
   docker run --rm --init --stop-timeout 60 \
-    --user "$(id -u):$(id -g)" \
+    --user "$docker_user" \
     --mount type=bind,source="$PWD/data",target=/data \
     --mount type=bind,source="$PWD/output",target=/output \
     radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper "$@"
