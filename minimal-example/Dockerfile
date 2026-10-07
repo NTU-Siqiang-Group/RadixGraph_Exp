@@ -24,16 +24,6 @@ RUN apt-get update && apt-get install -y \
     python3 python3-pip python3-dev \
     wget curl ca-certificates
 
-# Check for NUMA availability
-RUN if numactl --hardware | grep -q "available:"; then \
-        echo "NUMA detected"; \
-        export HAS_NUMA=1; \
-    else \
-        echo "No NUMA available, will skip Teseo build"; \
-        export HAS_NUMA=0; \
-    fi && \
-    echo "HAS_NUMA=$HAS_NUMA" >> /etc/environment
-
 # Make gcc-11 / g++-11 default (matches notebook)
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 && \
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
@@ -144,24 +134,38 @@ RUN cd build && \
 # Build GFE Driver for Teseo
 # ----------------------------
 WORKDIR /workspace/gfe_driver
-RUN /bin/bash -c " \
-    source /etc/environment && \
-    if [ \"\$HAS_NUMA\" -eq 1 ]; then \
-        git clone https://github.com/cwida/teseo && \
-        cd teseo && \
-        sed -i 's/@conf_numa_num_nodes@/1/' include/teseo/context/static_configuration.hpp.in && \
-        autoreconf -iv && \
-        mkdir build && cd build && \
-        ../configure --enable-optimize --disable-debug && \
-        make -j && \
-        cd ../../build && \
-        ../configure --enable-optimize --disable-debug --enable-mem-analysis --with-teseo=../teseo/build && \
-        make clean && make -j && \
-        mv gfe_driver gfe_driver_teseo && \
-        mv Makefile Makefile_teseo; \
-    else \
-        echo 'Skipping Teseo build due to no NUMA'; \
-    fi"
+ARG TESEO_REV=2c37c2831c4d2acaaa838a86e1318363ce68c45b
+RUN git clone https://github.com/cwida/teseo.git && \
+    git -C teseo checkout --detach "${TESEO_REV}"
+
+# Teseo's non-NUMA mode works with Docker's default syscall restrictions.
+# Keep its thread contexts on the single allocated node, including on NUMA hosts.
+RUN python3 - <<'PYFIX'
+from pathlib import Path
+
+path = Path('/workspace/gfe_driver/teseo/src/context/thread_context.cpp')
+text = path.read_text()
+old = 'm_cache_numa_thread = util::Thread::get_numa_id();'
+if text.count(old) != 1:
+    raise SystemExit('Teseo NUMA thread assignment changed; inspect non-NUMA allocation bounds')
+header = '#include "teseo/context/static_configuration.hpp"'
+if header not in text:
+    text = header + '\n' + text
+text = text.replace(old, 'm_cache_numa_thread = StaticConfiguration::numa_enabled ? util::Thread::get_numa_id() : 0;')
+path.write_text(text)
+PYFIX
+
+RUN cd teseo && \
+    autoreconf -iv && \
+    mkdir build && cd build && \
+    ../configure --enable-optimize --disable-debug --disable-numa && \
+    make -j
+
+RUN cd build && \
+    ../configure --enable-optimize --disable-debug --enable-mem-analysis --with-teseo=../teseo/build && \
+    make clean && make -j && \
+    mv gfe_driver gfe_driver_teseo && \
+    mv Makefile Makefile_teseo
 
 # ----------------------------
 # Build GFE Driver for Sortledton
