@@ -35,6 +35,9 @@ if [[ $PROFILE == paper ]]; then
         fi
     }
     archive_needed=0
+    # Older pipeline versions overwrote the original algorithm lists. Restore
+    # archive properties once, including when cached edge/vertex files exist.
+    [[ -f $DATA_DIR/.archive-properties-v2-ready ]] || archive_needed=1
     for name in graph500-24 uniform-24 dota-league; do
         for extension in properties e v; do
             [[ -s $DATA_DIR/$name.$extension ]] || archive_needed=1
@@ -42,25 +45,32 @@ if [[ $PROFILE == paper ]]; then
     done
     if [[ $archive_needed == 1 ]]; then
         fetch https://zenodo.org/records/3966439/files/datasets.tar.gz "$DATA_DIR/downloads/datasets.tar.gz"
-        # Extract only the three paper graphs. The archive also holds scale 26.
+        # Restore original properties; reuse already extracted graph data.
         python3 - "$DATA_DIR" <<'PY'
 import sys, tarfile
 from pathlib import Path
 root = Path(sys.argv[1])
 names = ('graph500-24', 'uniform-24', 'dota-league')
-wanted = {name + extension for name in names for extension in ('.properties', '.e', '.v')}
+wanted = {name + '.properties' for name in names}
+wanted.update(name + extension for name in names for extension in ('.e', '.v')
+              if not (root / (name + extension)).is_file() or (root / (name + extension)).stat().st_size == 0)
 with tarfile.open(root / 'downloads/datasets.tar.gz', 'r|gz') as archive:
     for member in archive:
         base = Path(member.name).name
         if member.isfile() and base in wanted:
             destination = root / base
-            if not destination.exists() or destination.stat().st_size != member.size:
-                source = archive.extractfile(member)
-                temporary = destination.with_name(destination.name + '.part')
-                with temporary.open('wb') as output:
-                    import shutil
-                    shutil.copyfileobj(source, output, length=1024 * 1024)
-                temporary.replace(destination)
+            source = archive.extractfile(member)
+            temporary = destination.with_name(destination.name + '.part')
+            with temporary.open('wb') as output:
+                import shutil
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+            temporary.replace(destination)
+            wanted.remove(base)
+            if not wanted:
+                break
+if wanted:
+    raise SystemExit('Missing archive inputs: ' + ', '.join(sorted(wanted)))
+(root / '.archive-properties-v2-ready').touch()
 PY
     fi
     for name in com-lj.ungraph com-orkut.ungraph twitter-2010; do
@@ -127,8 +137,9 @@ for name in names:
 PY
 fi
 
-# Preserve graph metadata/source IDs supplied by Graphalytics; add BC and
-# normalize archive filenames instead of passing *.e to the *.el-only tool.
+# Preserve original Graphalytics algorithms and parameters. Unweighted graphs
+# omit SSSP intentionally: GFE enables it with random weights/a loaded source.
+# Add only BC to the archive properties, as needed by the paper experiments.
 python3 - "$DATA_DIR" <<'PY'
 import re, sys
 from pathlib import Path
@@ -139,10 +150,17 @@ for name in ('graph500-24', 'uniform-24', 'dota-league', 'com-lj.ungraph', 'com-
         raise SystemExit(f'Missing dataset properties: {path}')
     text = path.read_text()
     prefix = f'graph.{name}.'
-    for key, value in [('algorithms', 'bfs, cdlp, lcc, pr, sssp, wcc, bc'), ('bc.max-iterations', '5')]:
-        pattern = rf'^{re.escape(prefix + key)}\s*=.*$'
-        line = prefix + key + ' = ' + value
-        text = re.sub(pattern, lambda _: line, text, flags=re.M) if re.search(pattern, text, re.M) else text + '\n' + line + '\n'
+    if name in ('graph500-24', 'uniform-24', 'dota-league'):
+        pattern = rf'^({re.escape(prefix + "algorithms")}\s*=\s*)(.*)$'
+        match = re.search(pattern, text, re.M)
+        if not match:
+            raise SystemExit(f'Missing algorithm list: {path}')
+        algorithms = [value.strip() for value in match[2].split(',') if value.strip()]
+        if 'bc' not in [value.lower() for value in algorithms]:
+            text = re.sub(pattern, lambda m: m[1] + ', '.join(algorithms + ['bc']), text, flags=re.M)
+        pattern = rf'^{re.escape(prefix + "bc.max-iterations")}\s*=.*$'
+        if not re.search(pattern, text, re.M):
+            text += f'\n{prefix}bc.max-iterations = 5\n'
     # Absolute upstream paths would reference the publisher's machine.
     for kind in ('vertex', 'edge'):
         pattern = rf'^(graph\.[^\s]+\.{kind}-file\s*=\s*)(.+)$'
