@@ -130,13 +130,13 @@ Allow **several days for the first full run** on a 64-thread Xeon server meeting
 | Stage | Estimated time |
 | --- | --- |
 | Docker build, if needed | 30–90 minutes |
-| 1. `prepare`: download and preprocessing | About 12 hours |
+| 1. `prepare`: download datasets and preprocessing | About 12 hours |
 | 2. `figure8`: Figure 8 | About 3 hours |
-| 3. `figure9`: Figure 9 | About 3 hours |
-| 4. `figure10`: Figure 10 | About 5 days |
-| 5. `figure11`: Figure 11 | About 3 hours |
-| 6. `figure12`: Figure 12, all panels | Less than 1 hour |
-| 7. `figure13`: Figure 13 | Less than 1 hous |
+| 3. `figure9`: Figure 9 | About 4 hours |
+| 4. `figure10`: Figure 10 | About **5 days** |
+| 5. `figure11`: Figure 11 | About 2 hours |
+| 6. `figure12`: Figure 12, all panels | A few minutes |
+| 7. `figure13`: Figure 13 | A few minutes |
 | 8. `tables,batch`: Tables 5–7 and batch-update baselines | About 24 hours |
 | `report`: regenerate plots and tables from an existing run | A few minutes |
 
