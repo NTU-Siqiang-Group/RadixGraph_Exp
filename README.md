@@ -50,7 +50,7 @@ docker run --rm --init --stop-timeout 60 \
 
 Find plots and table PDFs are in `output/<UTC-run-id>/figures/`, and raw CSV results are in `output/<UTC-run-id>/tables/`.
 
-### Run the experiments stage by stage
+### Run the experiments stage by stage (Recommended)
 
 Alternatively, after building the image and creating `data/` and `output/`, define this helper in Bash from the repository root:
 
@@ -143,7 +143,7 @@ For the full `docker run` command, append `--force` after `--stages all`.
 
 We recommend meeting the requirements; forced runs may fail or produce incomplete results.
 
-### Acknowledgment
+### Acknowledgement
 
 The Docker reproduction pipeline was largely developed and validated with assistance from [OpenAI Codex](https://openai.com/codex/).
 
