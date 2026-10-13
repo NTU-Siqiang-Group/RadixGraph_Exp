@@ -5,6 +5,7 @@ BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
 [[ $BUILD_JOBS =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be a positive integer' >&2; exit 2; }
+python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-timeouts.py" "$GFE_DIR"
 build_driver() {
     local name=$1 system=$2 hops=$3 lib=$4
     local build="$GFE_DIR/builds/$name"

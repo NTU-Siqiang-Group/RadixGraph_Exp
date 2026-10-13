@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -47,8 +48,10 @@ class Pipeline:
         self.radix = args.radix_dir.resolve()
         self.datasets = args.data_dir.resolve()
         self.threads = args.threads or (64 if self.profile == "paper" else 2)
-        if self.threads < 1 or args.timeout_hours <= 0:
-            raise ValueError("threads and timeout-hours must be positive")
+        if self.threads < 1:
+            raise ValueError("threads must be positive")
+        if not math.isfinite(args.timeout_hours) or args.timeout_hours < 0:
+            raise ValueError("timeout-hours must be finite and nonnegative (0 disables the limit)")
         os.environ["RG_THREADS"] = str(self.threads)
         os.environ["OMP_NUM_THREADS"] = str(self.threads)
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -137,7 +140,7 @@ class Pipeline:
                     data = path.read_bytes()
                     entry["files"][key].update(sha256=hashlib.sha256(data).hexdigest(), content=data.decode())
             entry["graphlogs"] = []
-            for suffix in ("", "-1.0", "-delete"):
+            for suffix in ("", "-1.0", "-1.0-gtx-20", "-delete"):
                 path = self.datasets / (spec["name"] + suffix + ".graphlog")
                 if path.is_file():
                     with path.open("rb") as stream:
@@ -184,7 +187,8 @@ class Pipeline:
                 if self.progress:
                     refresh_thread = threading.Thread(target=refresh_progress, daemon=True)
                     refresh_thread.start()
-                process.communicate(input=input_text, timeout=self.args.timeout_hours * 3600)
+                timeout = self.args.timeout_hours * 3600 if self.args.timeout_hours else None
+                process.communicate(input=input_text, timeout=timeout)
                 result.update(exit_code=process.returncode, status="ok" if process.returncode == 0 else "failed")
             except subprocess.TimeoutExpired:
                 self.stop(process)
@@ -234,14 +238,19 @@ class Pipeline:
         meta = dict(suite="gfe", system=SYSTEMS[system], dataset=spec["name"], experiment=experiment)
         meta.update(metadata or {})
         name = gfe_job_name(system, spec, experiment, variant)
+        # The paper omits these baselines only when loading Twitter's edges.
+        # Vertex-only insertion/query/memory measurements still include them.
         if (self.profile == "paper" and spec["name"] == "twitter-2010"
-                and system in ("teseo", "sortledton", "gtx") and experiment in ("random", "vertices", "analytics")):
-            return self.note(name, "expected_omission", "Twitter run omitted as in the paper (baseline failure/timeout)", meta)
+                and system in ("teseo", "sortledton", "gtx") and experiment in ("random", "analytics")):
+            return self.note(name, "expected_omission", "Full-graph Twitter run omitted as in the paper (baseline failure/timeout)", meta)
         if not self.optimize(system, spec):
             return self.note(name, "failed", "RadixGraph optimizer did not produce settings.txt", meta)
         binary = self.gfe / "build" / ("gfe_driver_" + system + ("_" + variant.split("-")[0] if variant else ""))
         graph = spec["vertices"] if experiment == "vertices" else spec["properties"]
-        command = [binary, "-G", graph, "-u", "-l", SYSTEMS[system], "-w", str(self.threads)]
+        # GFE otherwise defaults to a one-hour limit per graph algorithm.
+        # Optional process limits are enforced by run(), not by each kernel.
+        command = [binary, "-G", graph, "-u", "-l", SYSTEMS[system], "-w", str(self.threads),
+                   "--timeout", "0"]
         if experiment == "random":
             command += ["-R", "0"]
         elif experiment == "vertices":
@@ -250,11 +259,20 @@ class Pipeline:
             command += ["-r", str(self.threads), "-R", "3", "--blacklist", "cdlp"]
         elif experiment in ("mixed", "delete", "concurrent"):
             suffix = "-delete" if experiment == "delete" else "-1.0" if experiment == "mixed" else ""
+            if experiment == "mixed":
+                full_graphlog = self.datasets / (spec["name"] + "-1.0.graphlog")
+                fraction = .2 if system == "gtx" and spec["name"] in ("graph500-24", "uniform-24") else 1.0
+                if fraction == .2:
+                    suffix = "-1.0-gtx-20"
+                meta.update(workload_fraction=fraction, full_graphlog=str(full_graphlog))
             graphlog = self.datasets / (spec["name"] + suffix + ".graphlog")
+            if experiment == "mixed":
+                meta["graphlog"] = str(graphlog)
             database = self.output / "raw" / (name + ".sqlite3")
             database.parent.mkdir(exist_ok=True)
             meta["database"] = str(database)
-            command += ["--log", graphlog, "--aging_timeout", f"{max(1, int(self.args.timeout_hours * 3600))}s",
+            aging_timeout = max(1, int(self.args.timeout_hours * 3600)) if self.args.timeout_hours else 0
+            command += ["--log", graphlog, "--aging_timeout", f"{aging_timeout}s",
                         "--aging_memfp=true", "--aging_memfp_physical=true", "-d", database]
             if experiment == "delete":
                 command[command.index("-w") + 1] = "2"
@@ -313,7 +331,8 @@ def parser():
     result.add_argument("--output-dir", type=Path, default=Path(os.getenv("OUTPUT_DIR", "/output")), help="parent of timestamped run directories")
     result.add_argument("--run-dir", type=Path, help="explicit run directory, also used by --stages report")
     result.add_argument("--threads", type=int, default=int(os.getenv("THREADS", "0")), help="workers, 0 selects paper=64/smoke=2")
-    result.add_argument("--timeout-hours", type=float, default=float(os.getenv("TIMEOUT_HOURS", "48")), help="wall-clock limit for each job")
+    result.add_argument("--timeout-hours", type=float, default=float(os.getenv("TIMEOUT_HOURS", "0")),
+                        help="optional wall-clock limit for each job; 0 disables the limit")
     result.add_argument("--systems", type=lambda v: split_names(v, SYSTEMS), default=list(SYSTEMS), help="GFE systems, comma-separated")
     result.add_argument("--datasets", type=lambda v: split_names(v, DATASETS), default=list(DATASETS), help="dataset stems, comma-separated")
     result.add_argument("--skip-prepare", action="store_true", help="use an already prepared data cache")
@@ -409,7 +428,7 @@ def export(p):
     lines = ["# RadixGraph reproduction run", "", f"Profile: **{p.profile}**. Status: **{p.manifest['status']}**.", "",
              "Coverage: **" + ("full experiment grid" if full_scope else "selected experiment subset") + "**; see [coverage.json](coverage.json).", "",
              "CSV tables retain this run's full-precision measurements. Table PDFs in figures/ follow the paper's layout and contain only the table grid, headers and values.",
-             "Experimental plots use the original upstream plotting scripts and their original axes/progress calculations.",
+             "Experimental plots retain the original upstream drawing code. Figure 9 mixed-update progress uses measured operation counts, completion times and the recorded workload fraction (GTX's 20% prefix for new runs; legacy records default to full workloads).",
              "See [plotting/manifest.json](plotting/manifest.json) for script hashes, inputs, execution logs, and retained upstream assumptions.",
              "The smoke profile verifies wiring with synthetic data; it is not a paper result.", "",
              "## Artifacts", ""] + [f"- [{a}]({a})" for a in artifacts]

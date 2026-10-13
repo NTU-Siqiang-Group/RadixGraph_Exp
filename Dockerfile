@@ -74,6 +74,7 @@ COPY scripts/build/gfe-autoconf.sh /opt/radixgraph-exp/scripts/build/gfe-autocon
 RUN BUILD_JOBS=${BUILD_JOBS} bash /opt/radixgraph-exp/scripts/build/gfe-autoconf.sh
 
 COPY scripts/build/gfe-driver.sh /opt/radixgraph-exp/scripts/build/gfe-driver.sh
+COPY scripts/build/patch-timeouts.py /opt/radixgraph-exp/scripts/build/patch-timeouts.py
 RUN BUILD_JOBS=${BUILD_JOBS} bash /opt/radixgraph-exp/scripts/build/gfe-driver.sh radixgraph
 RUN BUILD_JOBS=${BUILD_JOBS} bash /opt/radixgraph-exp/scripts/build/gfe-driver.sh radixgraph_1hop
 RUN BUILD_JOBS=${BUILD_JOBS} bash /opt/radixgraph-exp/scripts/build/gfe-driver.sh radixgraph_2hop

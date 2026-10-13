@@ -1,6 +1,8 @@
 from contextlib import redirect_stderr, redirect_stdout
+import csv
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -11,7 +13,8 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from pipeline import Pipeline, main, parser
 from progress import ProgressBar
-from gfe_reports import seconds, parse_log, database_series, delete_series, resolve_evidence
+from gfe_reports import seconds, parse_log, database_series, delete_series, resolve_evidence, render_gfe_reports
+from upstream_plots import METHODS, mixed_checkpoint_series
 
 
 class MeasurementTests(unittest.TestCase):
@@ -80,6 +83,46 @@ class MeasurementTests(unittest.TestCase):
             self.assertEqual(points, [])
             self.assertEqual(aging["completion_time"], 2000)
             self.assertEqual(termination, [])
+
+    def test_mixed_export_preserves_gtx_prefix_and_legacy_workload_progress(self):
+        # A completed 200-operation input can represent either a new 20%
+        # prefix or a historical full workload. Use recorded provenance rather
+        # than inferring a restriction from the system name.
+        for fraction, expected_progress, expected_checkpoints in (
+                (.2, [10, 20], [3, 9]),
+                (None, [50, 100], [3] * 5 + [9] * 5)):
+            with self.subTest(fraction=fraction), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                (output / "raw").mkdir()
+                (output / "logs").mkdir()
+                database = output / "raw" / "mixed.sqlite3"
+                with sqlite3.connect(database) as connection:
+                    connection.executescript(
+                        "CREATE TABLE aging (num_updates INTEGER,completion_time INTEGER);"
+                        "INSERT INTO aging VALUES (200,9000000);"
+                        "CREATE TABLE aging_intermediate_throughput3 "
+                        "(second INTEGER,num_operations INTEGER);"
+                        "INSERT INTO aging_intermediate_throughput3 VALUES (3,100);")
+                log = output / "logs" / "mixed.log"
+                log.write_text("[Pipeline] Operations performed: 200 / 200\n")
+                metadata = dict(suite="gfe", system="gtx", dataset="graph500-24",
+                                experiment="mixed", database=str(database))
+                if fraction is not None:
+                    metadata["workload_fraction"] = fraction
+                record = dict(name="mixed-gtx-graph500-24", status="ok",
+                              log=str(log), metadata=metadata)
+
+                report = render_gfe_reports(output, [record])
+
+                self.assertEqual(report["issues"], [])
+                self.assertEqual(record["status"], "ok")
+                with (output / "tables" / "figure9_mixed.csv").open() as stream:
+                    rows = list(csv.DictReader(stream))
+                self.assertEqual([float(row["progress_pct"]) for row in rows], expected_progress)
+                self.assertEqual([float(row["elapsed_s"]) for row in rows], [3, 9])
+                series = mixed_checkpoint_series(rows)
+                self.assertEqual(series["graph500-24"][list(METHODS).index("gtx")],
+                                 expected_checkpoints)
 
     def test_delete_progress_uses_last_worker_start(self):
         points = delete_series("Progress: 50%\nDelete started.\nMemory consumption: 100 MB\n"
@@ -209,6 +252,50 @@ class RunnerTests(unittest.TestCase):
                 self.assertTrue(all(call.kwargs["metadata"]["artifact"] == stage
                                     for call in run.call_args_list))
 
+    def test_unlimited_default_and_explicit_timeout_options(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(parser().parse_args([]).timeout_hours, 0)
+        with patch.dict(os.environ, {"TIMEOUT_HOURS": "96"}):
+            self.assertEqual(parser().parse_args([]).timeout_hours, 96)
+            self.assertEqual(parser().parse_args(["--timeout-hours", "0"]).timeout_hours, 0)
+
+    def test_unlimited_job_waits_without_deadline(self):
+        self.p.args.timeout_hours = 0
+        process = Mock(returncode=0)
+        with patch("pipeline.subprocess.Popen", return_value=process):
+            result = self.p.run("unlimited", ["benchmark"], self.root)
+        self.assertEqual(result["status"], "ok")
+        process.communicate.assert_called_once_with(input=None, timeout=None)
+
+    def test_invalid_timeout_values_are_rejected(self):
+        for value in ("-1", "nan", "inf"):
+            with self.subTest(value=value):
+                args = parser().parse_args(["--timeout-hours=" + value])
+                with self.assertRaisesRegex(ValueError, "finite and nonnegative"):
+                    Pipeline(args)
+
+    def test_unlimited_gfe_jobs_disable_internal_limits(self):
+        self.p.args.timeout_hours = 0
+        spec = next(s for s in self.p.dataset_specs if s["name"] == "graph500-24")
+        for experiment in ("random", "vertices", "analytics", "mixed", "delete", "concurrent"):
+            with self.subTest(experiment=experiment):
+                with patch.object(self.p, "run", return_value={"status": "ok"}) as run:
+                    self.p.gfe_job("gtx", spec, experiment,
+                                   metadata={"read_threads": 4, "write_threads": 32})
+                command = run.call_args.args[1]
+                self.assertEqual(command[command.index("--timeout") + 1], "0")
+                if experiment in ("mixed", "delete", "concurrent"):
+                    self.assertEqual(command[command.index("--aging_timeout") + 1], "0s")
+
+    def test_explicit_limit_also_bounds_aging_workloads(self):
+        self.p.args.timeout_hours = .25
+        spec = next(s for s in self.p.dataset_specs if s["name"] == "graph500-24")
+        with patch.object(self.p, "run", return_value={"status": "ok"}) as run:
+            self.p.gfe_job("gtx", spec, "mixed")
+        command = run.call_args.args[1]
+        self.assertEqual(command[command.index("--aging_timeout") + 1], "900s")
+        self.assertEqual(command[command.index("--timeout") + 1], "0")
+
     def test_timeout_keeps_log_and_durable_status(self):
         self.enable_progress({"timeout"})
         self.p.args.timeout_hours = .00002
@@ -263,11 +350,86 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("--aging_release_memory=false", command)
         self.assertIn("--delete_all=true", command)
 
-    def test_twitter_expected_omission_paper_only(self):
+    def test_only_figure9_gtx_mixed_jobs_use_twenty_percent_graphlogs(self):
+        for profile in ("paper", "smoke"):
+            self.p.profile = profile
+            for dataset in ("graph500-24", "uniform-24", "dota-league"):
+                spec = next(s for s in self.p.dataset_specs if s["name"] == dataset)
+                for system in ("teseo", "sortledton", "bvgt", "gtx", "radixgraph"):
+                    for experiment in ("mixed", "delete", "concurrent"):
+                        with self.subTest(profile=profile, dataset=dataset,
+                                          system=system, experiment=experiment):
+                            with patch.object(self.p, "optimize", return_value=True):
+                                with patch.object(self.p, "run", return_value={"status": "ok"}) as run:
+                                    self.p.gfe_job(system, spec, experiment,
+                                                   metadata={"read_threads": 4, "write_threads": 32})
+                            command = run.call_args.args[1]
+                            metadata = run.call_args.kwargs["metadata"]
+                            suffix = {"mixed": "-1.0", "delete": "-delete", "concurrent": ""}[experiment]
+                            shortened = (system == "gtx" and experiment == "mixed"
+                                         and dataset in ("graph500-24", "uniform-24"))
+                            if shortened:
+                                suffix += "-gtx-20"
+                            expected = self.p.datasets / (dataset + suffix + ".graphlog")
+                            self.assertEqual(command[command.index("--log") + 1], expected)
+                            if experiment == "mixed":
+                                self.assertEqual(metadata["graphlog"], str(expected))
+                                self.assertEqual(metadata["workload_fraction"], .2 if shortened else 1)
+                                if shortened:
+                                    self.assertEqual(metadata["full_graphlog"],
+                                                     str(self.p.datasets / (dataset + "-1.0.graphlog")))
+
+    def test_snapshot_retains_both_full_and_gtx_prefix_graphlog_headers(self):
+        spec = next(s for s in self.p.dataset_specs if s["name"] == "graph500-24")
+        self.p.dataset_specs = [spec]
+        headers = {"-1.0": "internal.edges.cardinality = 1000\n",
+                   "-1.0-gtx-20": "internal.edges.cardinality = 200\n"}
+        for suffix, header in headers.items():
+            path = self.p.datasets / (spec["name"] + suffix + ".graphlog")
+            path.write_bytes(header.encode() + b"__BINARY_SECTION_FOLLOWS\n\x00\xff")
+
+        self.p.snapshot_inputs()
+
+        entries = json.loads((self.p.output / "inputs.json").read_text())
+        self.assertEqual(len(entries), 1)
+        graphlogs = {Path(entry["path"]).name: entry for entry in entries[0]["graphlogs"]}
+        self.assertEqual(len(graphlogs), 2)
+        for suffix, header in headers.items():
+            filename = spec["name"] + suffix + ".graphlog"
+            self.assertEqual(graphlogs[filename]["header"], header)
+            self.assertEqual(graphlogs[filename]["bytes"], (self.p.datasets / filename).stat().st_size)
+
+    def test_twitter_omissions_apply_only_to_full_graph_paper_jobs(self):
+        spec = next(s for s in self.p.dataset_specs if s["name"] == "twitter-2010")
+        for profile in ("paper", "smoke"):
+            self.p.profile = profile
+            for system in ("teseo", "sortledton", "gtx"):
+                for experiment in ("random", "vertices", "analytics"):
+                    with self.subTest(profile=profile, system=system, experiment=experiment):
+                        with patch.object(self.p, "run", return_value={"status": "ok"}) as run:
+                            result = self.p.gfe_job(system, spec, experiment)
+                        if profile == "paper" and experiment != "vertices":
+                            self.assertEqual(result["status"], "expected_omission")
+                            run.assert_not_called()
+                        else:
+                            self.assertEqual(result["status"], "ok")
+                            run.assert_called_once()
+                            command = run.call_args.args[1]
+                            if experiment == "vertices":
+                                self.assertEqual(command[command.index("-G") + 1], spec["vertices"])
+                                self.assertIn("--insert_vertex_only=true", command)
+
+    def test_twitter_spruce_and_radixgraph_jobs_remain_enabled(self):
         self.p.profile = "paper"
         spec = next(s for s in self.p.dataset_specs if s["name"] == "twitter-2010")
-        result = self.p.gfe_job("teseo", spec, "random")
-        self.assertEqual(result["status"], "expected_omission")
+        for system in ("bvgt", "radixgraph"):
+            for experiment in ("random", "vertices", "analytics"):
+                with self.subTest(system=system, experiment=experiment):
+                    with patch.object(self.p, "optimize", return_value=True):
+                        with patch.object(self.p, "run", return_value={"status": "ok"}) as run:
+                            result = self.p.gfe_job(system, spec, experiment)
+                    self.assertEqual(result["status"], "ok")
+                    run.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -219,7 +219,11 @@ def render_gfe_reports(output, records, profile="paper"):
                 if final_time and (not points or points[-1][0] < 100):
                     points.append((100, final_time))
         if experiment == "mixed":
-            mixed.extend(dict(system=meta["system"], dataset=meta["dataset"], progress_pct=x, elapsed_s=y,
+            # Completing a deliberately shortened input means 20% of the
+            # common workload, not 100%. Legacy runs used full shared logs.
+            fraction = float(meta.get("workload_fraction", 1.0))
+            mixed.extend(dict(system=meta["system"], dataset=meta["dataset"], progress_pct=x * fraction,
+                              input_progress_pct=x, workload_fraction=fraction, elapsed_s=y,
                               status=record["status"], log=record.get("log", "")) for x, y in points)
             if record["status"] == "ok" and not points:
                 record["status"] = "parse_failed"

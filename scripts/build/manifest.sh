@@ -19,6 +19,7 @@ manifest['spruce_library_sha256'] = hashlib.sha256((gfe / 'libBVGT.a').read_byte
 manifest['teseo_numa'] = False
 manifest['compiler'] = subprocess.check_output([os.environ['CXX'], '--version'], text=True).splitlines()[0]
 manifest['patches'] = ['Teseo non-NUMA thread contexts select allocated node zero', 'GAPBS queue/CAS atomics restored in standalone and GFE RadixGraph', 'graphlog full/single-element rightmost subtree bounds', 'GFE aging worker-zero partition restored and final operation counts logged', 'runtime standalone thread count', 'kernel-independent VmRSS field parsing', 'batch max-id bit length',
-                       'transformation bounds guard and size arguments', 'slightly skewed workload distribution']
+                       'transformation bounds guard and size arguments', 'slightly skewed workload distribution',
+                       'GFE aging zero timeout is unlimited', 'GTX LCC honors the configured timeout']
 Path('/opt/radixgraph-exp/source-versions.json').write_text(json.dumps(manifest, indent=2) + '\n')
 PY

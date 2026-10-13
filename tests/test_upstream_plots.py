@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -7,7 +8,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from upstream_plots import _stage_raw_gfe, run_original, write_plot_csv
+from upstream_plots import (MIXED_INVOKER, _stage_raw_gfe, mixed_checkpoint_series,
+                            run_original, write_plot_csv)
 from gfe_reports import DATASETS, LABELS, METHODS
 
 
@@ -50,6 +52,110 @@ class UpstreamPlotTests(unittest.TestCase):
         self.assertAlmostEqual(float(rows[5][1]), 1.23456789)
         self.assertEqual(rows[5][2:-1], ["NaN"] * 5)
         self.assertTrue(all(row[1:-1] == ["NaN"] * 6 for row in rows[1:5]))
+
+    def test_completed_gtx_mixed_run_uses_full_measured_progress(self):
+        observations = [(10.2, 57), (20.1, 111), (30.1, 161), (40.1, 213),
+                        (50.0088, 285), (60.1, 350), (70.1, 412), (80.1, 461),
+                        (90.1, 509), (99.9839, 579), (100, 579.922002)]
+        rows = [dict(system="gtx", dataset="graph500-24", status="ok",
+                     progress_pct=str(progress), elapsed_s=str(elapsed))
+                for progress, elapsed in observations]
+        series = mixed_checkpoint_series(list(reversed(rows)))
+        gtx = series["graph500-24"][list(METHODS).index("gtx")]
+        self.assertEqual(gtx, [57, 111, 161, 213, 285, 350, 412, 461, 509, 579.922002])
+        self.assertEqual(len(gtx), 10)
+
+    def test_partial_mixed_run_preserves_twenty_percent_extent(self):
+        rows = [dict(system="gtx", dataset="uniform-24", status="incomplete_workload",
+                     progress_pct=progress, elapsed_s=elapsed)
+                for progress, elapsed in ((10.1, 41), (20.1, 80), (20.7, 85))]
+        series = mixed_checkpoint_series(rows)
+        self.assertEqual(series["uniform-24"][list(METHODS).index("gtx")], [41, 80])
+
+    def test_mixed_series_preserves_all_method_and_dataset_positions(self):
+        datasets = ("graph500-24", "uniform-24")
+        rows = [dict(system=system, dataset=dataset, status="ok",
+                     progress_pct=100, elapsed_s=100 * graph + method + 1)
+                for graph, dataset in enumerate(datasets)
+                for method, system in enumerate(METHODS)]
+        series = mixed_checkpoint_series(list(reversed(rows)))
+        self.assertEqual(set(series), set(datasets))
+        for graph, dataset in enumerate(datasets):
+            self.assertEqual(series[dataset], [[100 * graph + method + 1] * 10
+                                              for method in range(len(METHODS))])
+
+    def test_fast_mixed_sample_can_cross_multiple_checkpoints(self):
+        rows = [dict(system="radixgraph", dataset="uniform-24", status="ok",
+                     progress_pct=progress, elapsed_s=elapsed)
+                for progress, elapsed in ((0, 0), (24, 1), (100, 1.234567))]
+        series = mixed_checkpoint_series(rows)
+        self.assertEqual(series["uniform-24"][-1], [1, 1] + [1.234567] * 8)
+
+    def test_mixed_series_accepts_observed_failed_progress_and_ignores_invalid_rows(self):
+        rows = [dict(system="gtx", dataset="graph500-24", status=status,
+                     progress_pct=progress, elapsed_s=elapsed)
+                for status, progress, elapsed in (
+                    ("ok", 10, 1), ("incomplete_workload", 20, 2),
+                    ("timeout", 30, 3), ("failed", 40, 4),
+                    ("parse_failed", 100, 4.1), ("expected_omission", 100, 4.2),
+                    ("running", 100, 4.3), ("ok", "invalid", 5),
+                    ("ok", "NaN", 5), ("ok", "inf", 5), ("ok", -1, 5),
+                    ("ok", 101, 5), ("ok", 50, "invalid"),
+                    ("ok", 50, "NaN"), ("ok", 50, "inf"), ("ok", 50, -1),
+                    ("ok", None, 5), ("ok", 50, None))]
+        rows.extend([dict(system="unknown", dataset="graph500-24", status="ok",
+                          progress_pct=100, elapsed_s=5),
+                     dict(system="gtx", dataset="dota-league", status="ok",
+                          progress_pct=100, elapsed_s=5)])
+        series = mixed_checkpoint_series(rows)
+        self.assertEqual(series["graph500-24"][list(METHODS).index("gtx")], [1, 2, 3, 4])
+        self.assertTrue(all(not values for values in series["uniform-24"]))
+
+    def test_mixed_invoker_injects_series_and_preserves_upstream_deletion_and_drawing(self):
+        source = self.root / "upstream.py"
+        source.write_text("import json\n"
+                          "mixed_g500 = [[] for _ in range(5)]\n"
+                          "mixed_u24 = [[] for _ in range(5)]\n"
+                          "def read_results_mixed(path):\n"
+                          "    raise RuntimeError('incorrect upstream reader ran')\n"
+                          "def read_results_delete(path):\n"
+                          "    print('deletion reader retained ' + path)\n"
+                          "read_results_mixed('./results')\n"
+                          "read_results_delete('./results')\n"
+                          "print(json.dumps({'graph500-24': mixed_g500, 'uniform-24': mixed_u24}))\n"
+                          "print('drawing code retained')\n")
+        before = source.read_bytes()
+        invoker = self.root / "mixed_invoker.py"
+        invoker.write_text(MIXED_INVOKER)
+        series = {"graph500-24": [[], [], [], [57, 111, 161], [10, 20]],
+                  "uniform-24": [[1], [2], [3], [99, 154], [8, 16]]}
+        result = run_original(invoker, self.root / "work", json.dumps(
+            {"source": str(source), "series": series}))
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["source_unchanged"])
+        self.assertEqual(source.read_bytes(), before)
+        log = Path(result["log"]).read_text()
+        self.assertIn("deletion reader retained ./results", log)
+        self.assertIn("drawing code retained", log)
+        self.assertIn(json.dumps(series), log)
+        self.assertNotIn("incorrect upstream reader ran", log)
+
+    def test_mixed_invoker_rejects_changed_upstream_call_layout(self):
+        invoker = self.root / "mixed_invoker.py"
+        invoker.write_text(MIXED_INVOKER)
+        series = {dataset: [[] for _ in METHODS] for dataset in ("graph500-24", "uniform-24")}
+        for name, calls in (("absent", "pass\n"),
+                            ("nested", "if True:\n    read_results_mixed('./results')\n"),
+                            ("duplicate", "read_results_mixed('./results')\nread_results_mixed('./results')\n")):
+            with self.subTest(layout=name):
+                source = self.root / (name + ".py")
+                source.write_text("def read_results_mixed(path):\n    pass\n" + calls)
+                before = source.read_bytes()
+                result = run_original(invoker, self.root / name, json.dumps(
+                    {"source": str(source), "series": series}))
+                self.assertEqual(result["status"], "failed")
+                self.assertIn("read_results_mixed", Path(result["log"]).read_text())
+                self.assertEqual(source.read_bytes(), before)
 
     def test_raw_staging_omits_missing_or_short_sample_databases(self):
         output, work = self.root / "output", self.root / "plotting"

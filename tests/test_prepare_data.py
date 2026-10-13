@@ -1,4 +1,5 @@
 import io
+import inspect
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,68 @@ GENERATED = ("com-lj.ungraph", "com-orkut.ungraph", "twitter-2010")
 NAMES = ARCHIVED + GENERATED
 GRAPHLOGS = ("graph500-24-delete", "uniform-24-delete", "graph500-24-1.0",
              "uniform-24-1.0", "dota-league")
+MIXED_GRAPHS = ("graph500-24", "uniform-24")
+
+
+def write_graphlog(path, operations, *, aging=10):
+    """Small binary Graphlog fixture with independently compressed edge blocks."""
+    import struct
+    import zlib
+
+    vertices = struct.pack("=3Q", 13, 17, 29)
+    values = {
+        "aging_coeff": aging,
+        "internal.vertices.begin": 0,
+        "internal.vertices.cardinality": 3,
+        "internal.edges.begin": 0,
+        "internal.edges.block_size": 240,
+        "internal.edges.cardinality": operations,
+        "internal.edges.final": 10,
+    }
+
+    def header():
+        return ("# GRAPHLOG\n" + "".join(f"{key} = {value:019d}\n" for key, value in values.items())
+                + "__BINARY_SECTION_FOLLOWS\n").encode()
+
+    values["internal.vertices.begin"] = len(header())
+    values["internal.edges.begin"] = len(header()) + len(vertices)
+    with path.open("wb") as stream:
+        stream.write(header())
+        stream.write(vertices)
+        for first in range(0, operations, 10):
+            indices = range(first, min(first + 10, operations))
+            sources = [13 + i % 3 for i in indices]
+            destinations = [17 + i % 5 for i in indices]
+            weights = [0.5 if i % 2 else -0.5 for i in indices]
+            block = (struct.pack(f"={len(sources)}Q", *sources)
+                     + struct.pack(f"={len(destinations)}Q", *destinations)
+                     + struct.pack(f"={len(weights)}d", *weights))
+            compressor = zlib.compressobj(wbits=-15)
+            stream.write(compressor.compress(block) + compressor.flush())
+
+
+def read_graphlog(path):
+    """Decode fixtures without using the implementation under test."""
+    import struct
+    import zlib
+
+    contents = path.read_bytes()
+    header = contents.split(b"__BINARY_SECTION_FOLLOWS\n", 1)[0].decode()
+    values = dict(line.split(" = ", 1) for line in header.splitlines()[1:])
+    payload = contents[int(values["internal.edges.begin"]):]
+    edges = []
+    while payload:
+        decoder = zlib.decompressobj(wbits=-15)
+        block = decoder.decompress(payload) + decoder.flush()
+        if not decoder.eof or len(block) % 24:
+            raise AssertionError("Invalid compressed Graphlog edge block")
+        payload = decoder.unused_data
+        count = len(block) // 24
+        sources = struct.unpack_from(f"={count}Q", block)
+        destinations = struct.unpack_from(f"={count}Q", block, count * 8)
+        weights = struct.unpack_from(f"={count}d", block, count * 16)
+        edges.extend(zip(sources, destinations, weights))
+    return values, edges
 
 
 def properties(name, *, weighted=False, bc=False):
@@ -99,9 +162,11 @@ record('vertices')
 for name in %r:
     Path('datasets', name + '.vertices.el').write_text('13 17\\n')
 """ % (NAMES,))
-        self.write_tool(self.gfe / "graphlog-base" / "build" / "graphlog", """
+        self.write_tool(self.gfe / "graphlog-base" / "build" / "graphlog",
+                        inspect.getsource(write_graphlog) + """
 record('graphlog', Path(sys.argv[-1]).name)
-Path(sys.argv[-1]).write_bytes(b'cached graphlog\\n')
+aging = int(sys.argv[sys.argv.index('-a') + 1])
+write_graphlog(Path(sys.argv[-1]), 10 if aging == 1 else 100, aging=aging)
 """)
 
     def write_tool(self, path, body):
@@ -141,6 +206,24 @@ def record(*event):
                 self.assertEqual(read_properties(self.data / f"{name}.properties"), expected)
                 self.assertIn("# Original dataset parameters", (self.data / f"{name}.properties").read_text())
 
+    def assert_gtx_prefixes(self):
+        for name in MIXED_GRAPHS:
+            with self.subTest(dataset=name):
+                source = self.data / f"{name}-1.0.graphlog"
+                prefix = self.data / f"{name}-1.0-gtx-20.graphlog"
+                full_header, full_edges = read_graphlog(source)
+                prefix_header, prefix_edges = read_graphlog(prefix)
+                self.assertEqual(int(full_header["internal.edges.cardinality"]), 100)
+                self.assertEqual(len(full_edges), 100)
+                self.assertEqual(int(prefix_header["internal.edges.cardinality"]), 20)
+                self.assertEqual(prefix_edges, full_edges[:20])
+                self.assertEqual(prefix_header["internal.edges.begin"], full_header["internal.edges.begin"])
+                vertex_begin = int(full_header["internal.vertices.begin"])
+                edge_begin = int(full_header["internal.edges.begin"])
+                self.assertEqual(prefix.read_bytes()[vertex_begin:edge_begin],
+                                 source.read_bytes()[vertex_begin:edge_begin])
+                self.assertTrue(prefix.with_suffix(prefix.suffix + ".json").is_file())
+
     def test_fresh_paper_uses_original_archive_properties_and_only_generates_snap(self):
         self.prepare()
         self.assert_original_parameters()
@@ -156,6 +239,7 @@ def record(*event):
             self.assertIn("# Generated SNAP parameters", (self.data / f"{name}.properties").read_text())
         self.assertEqual(sum(event[0] == "vertices" for event in self.events()), 1)
         self.assertEqual(sum(event[0] == "graphlog" for event in self.events()), 5)
+        self.assert_gtx_prefixes()
 
     def test_old_cache_restores_properties_without_recreating_large_inputs(self):
         (self.data / ".profile").write_text("paper\n")
@@ -181,7 +265,8 @@ def record(*event):
         (self.data / ".vertices-ready").touch()
         for name in GRAPHLOGS:
             path = self.data / f"{name}.graphlog"
-            path.write_bytes(b"existing expensive graphlog\n")
+            write_graphlog(path, 10 if name.endswith("-delete") else 100,
+                           aging=1 if name.endswith("-delete") else 10)
             retained.append(path)
         before = {path: (path.read_bytes(), path.stat().st_mtime_ns, path.stat().st_ino)
                   for path in retained}
@@ -192,14 +277,21 @@ def record(*event):
                           for path in retained}, before)
         self.assertEqual({name: (self.data / f"{name}.properties").read_text() for name in GENERATED},
                          generated_properties)
+        self.assert_gtx_prefixes()
 
     def test_prepared_cache_is_idempotent_without_archive_or_external_tools(self):
         self.prepare()
         before = {path.name: path.read_bytes() for path in self.data.iterdir() if path.is_file()}
+        workload_metadata = {
+            path.name: (path.stat().st_mtime_ns, path.stat().st_ino)
+            for path in self.data.iterdir() if path.suffix in (".graphlog", ".json")}
         events = self.events()
         self.archive.unlink()
         self.prepare()
         self.assertEqual({path.name: path.read_bytes() for path in self.data.iterdir() if path.is_file()}, before)
+        self.assertEqual({path.name: (path.stat().st_mtime_ns, path.stat().st_ino)
+                          for path in self.data.iterdir() if path.suffix in (".graphlog", ".json")},
+                         workload_metadata)
         self.assertEqual(self.events(), events)
 
 

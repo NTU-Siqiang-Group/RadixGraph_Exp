@@ -218,4 +218,11 @@ PY
         mv "$DATA_DIR/$output.graphlog.part" "$DATA_DIR/$output.graphlog"
     fi
 done
+# GTX uses the first 20% of the same aging-10 mixed sequence. The graphlogs
+# contain compressed columnar blocks, so extract a valid prefix instead of
+# truncating bytes/lines or generating a different aging-2 workload.
+for graph in graph500-24 uniform-24; do
+    python3 "$(dirname -- "${BASH_SOURCE[0]}")/graphlog_prefix.py" --fraction 1/5 \
+        "$DATA_DIR/$graph-1.0.graphlog" "$DATA_DIR/$graph-1.0-gtx-20.graphlog"
+done
 printf 'Prepared %s inputs in %s\n' "$PROFILE" "$DATA_DIR"

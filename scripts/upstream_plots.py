@@ -13,6 +13,60 @@ import sys
 from gfe_reports import DATASETS, LABELS, METHODS, resolve_evidence
 
 
+MIXED_INVOKER = '''"""Supply measured mixed-update checkpoints to the upstream Figure 9 drawing code."""
+import ast
+import json
+from pathlib import Path
+import sys
+
+request = json.load(sys.stdin)
+source = Path(request["source"])
+tree = ast.parse(source.read_text(), filename=str(source))
+calls = [i for i, node in enumerate(tree.body)
+         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+         and isinstance(node.value.func, ast.Name)
+         and node.value.func.id == "read_results_mixed"]
+if len(calls) != 1:
+    raise SystemExit("Upstream mixed plotting layout changed; expected one read_results_mixed call")
+# The historical reader is paired with a launcher that truncates GTX to 20%.
+# Use recorded progress: new GTX runs use a 20% prefix; legacy runs used full logs.
+# Bypass only that reader; keep the original deletion reader and drawing code.
+tree.body[calls[0]:calls[0] + 1] = ast.parse(
+    'mixed_g500 = __measured_mixed_series["graph500-24"]\\n'
+    'mixed_u24 = __measured_mixed_series["uniform-24"]\\n').body
+namespace = {"__name__": "__main__", "__file__": str(source),
+             "__measured_mixed_series": request["series"]}
+exec(compile(tree, str(source), "exec"), namespace)
+'''
+
+
+def mixed_checkpoint_series(rows):
+    """Select actual 10%-100% milestones without rescaling incomplete runs."""
+    series = {dataset: [[] for _ in METHODS] for dataset in ("graph500-24", "uniform-24")}
+    samples = {}
+    for row in rows:
+        key = (row.get("dataset"), row.get("system"))
+        if (key[0] not in series or key[1] not in METHODS
+                or row.get("status") not in ("ok", "incomplete_workload", "timeout", "failed")):
+            continue
+        try:
+            progress, elapsed = float(row["progress_pct"]), float(row["elapsed_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(progress) and math.isfinite(elapsed) and 0 <= progress <= 100 and elapsed >= 0:
+            samples.setdefault(key, []).append((elapsed, progress))
+    for (dataset, system), points in samples.items():
+        points.sort()
+        checkpoints = []
+        for threshold in range(10, 101, 10):
+            elapsed = next((elapsed for elapsed, progress in points if progress >= threshold), None)
+            if elapsed is None:
+                break
+            checkpoints.append(elapsed)
+        series[dataset][list(METHODS).index(system)] = checkpoints
+    return series
+
+
 def write_plot_csv(path, records, experiment, metric, scale=1):
     """The original scripts require a final empty column after six datasets."""
     path = Path(path)
@@ -86,11 +140,27 @@ def _copy_figure(output, work, source_name, alias):
     return [str(p.relative_to(output)) for p in (original, canonical)]
 
 
-def _plot(output, gfe, work, script, artifact, filename, input_text=None, notes=None):
-    execution = run_original(gfe / "scripts" / script, work, input_text)
+def _plot(output, gfe, work, script, artifact, filename, input_text=None, notes=None, mixed_rows=None):
+    source = gfe / "scripts" / script
+    provenance = {}
+    if mixed_rows is None:
+        execution = run_original(source, work, input_text)
+    else:
+        source_hash = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
+        invoker = work / "invoke_mixed.py"
+        invoker.write_text(MIXED_INVOKER)
+        request = dict(source=str(source), series=mixed_checkpoint_series(mixed_rows))
+        inputs = work / "mixed_checkpoints.json"
+        inputs.write_text(json.dumps(request, indent=2) + "\n")
+        execution = run_original(invoker, work, json.dumps(request))
+        unchanged = source.is_file() and hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
+        provenance = dict(source_script=str(source), source_sha256=source_hash, source_unchanged=unchanged,
+                          input_adapter="measured mixed-update progress", checkpoints=str(inputs.relative_to(output)))
+        if not unchanged:
+            execution.update(status="failed", reason="Original plotting source is missing or changed during execution")
     figures = _copy_figure(output, work, filename, artifact) if execution["status"] == "ok" else []
     record = dict(artifact=artifact, status=execution["status"], execution=execution,
-                  figures=figures, notes=notes or [])
+                  figures=figures, notes=notes or [], **provenance)
     if record["status"] == "ok" and not figures:
         record.update(status="failed", reason="Original script did not produce " + filename)
     return record
@@ -187,9 +257,12 @@ def render_original_plots(output, records, gfe, radix, profile):
     gfe_records = [r for r in records if r.get("metadata", {}).get("suite") == "gfe"]
     if any(r["metadata"]["experiment"] in ("mixed", "delete") for r in gfe_records):
         plots.append(_plot(output, gfe, work, "plot_all_2.py", "figure9", "combined_plots2.pdf", notes=[
-            "Original progress calculations are retained, including the GTX 20%-workload assumption and deletion sample spacing.",
-            "Mixed SQLite files without two one-second samples are omitted; their measured tables remain available.",
-            {"omitted_mixed_inputs": omissions}]))
+            "Mixed-update checkpoints use measured operation counts scaled by the recorded workload fraction in tables/figure9_mixed.csv.",
+            "New GTX mixed runs use an exact 20% prefix of the common graphlog and end at 20% on the full workload axis; legacy records without a fraction retain their full-workload scale.",
+            "Each decile uses its first observed sample time; successful inputs include their exact completion endpoint on the recorded workload scale. Partial inputs are not stretched to completion.",
+            "Original drawing code and deletion sample spacing are retained; only the mixed-update data reader is bypassed.",
+            {"omitted_raw_mixed_copies": omissions}],
+            mixed_rows=_read_csv(output / "tables" / "figure9_mixed.csv")))
     concurrent = [r for r in gfe_records if r["metadata"]["experiment"] == "concurrent"]
     if concurrent:
         slots = {(r["metadata"]["system"], r["metadata"]["hop"], r["metadata"]["axis"], r["metadata"]["count"])
