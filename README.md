@@ -7,13 +7,22 @@ RadixGraph repo: [https://github.com/ForwardStar/RadixGraph](https://github.com/
 GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_driver](https://github.com/ForwardStar/gfe_driver)
 
 ## Minimum requirements
-To reproduce the full experiments, following are required:
 
-- CPU: at least supporting 64 threads;
+### Platform and software
 
-- Memory: >= 256G;
+- Supported platform: **Linux on x86-64** (`x64` / `amd64`). Both Docker images use Ubuntu 24.04.
+- Software: a working Docker installation capable of building and running Linux x86-64 containers, and Bash for the commands below.
+- Network access: required to download dependencies and source repositories during the image build, and datasets during preparation.
 
-- Disk: >= 512G.
+**ARM/ARM64 is currently unsupported, including Apple Silicon (M-series Macs).** We try our best to support ARM. However, the Spruce baseline experiment depends on the released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0), which was built for x86-64. The build downloads this archive as `libBVGT.a`; it cannot be linked into a native ARM64 executable.
+
+### Hardware for full experiments
+
+To reproduce the full paper experiments, the following resources must be available to the container:
+
+- CPU: at least 64 usable logical CPU threads.
+- Memory: at least 256 GB of accessible RAM, swap is excluded.
+- Storage: at least 512 GB for the dataset cache. Allow additional space for Docker images, build caches, and experiment outputs, and ensure the dataset and output directories are writable.
 
 ## Reproduce RadixGraph with Docker
 
@@ -141,7 +150,7 @@ run_radixgraph --stages all --force
 
 For the full `docker run` command, append `--force` after `--stages all`.
 
-We recommend meeting the requirements; forced runs may fail or produce incomplete results.
+We recommend meeting the requirements; forced runs may fail or produce incomplete results. `--force` only bypasses resource checks; it does not enable ARM support.
 
 ### Acknowledgement
 
