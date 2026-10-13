@@ -10,12 +10,19 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
 HERE = Path(__file__).resolve().parent
 DATASETS = ("com-lj.ungraph", "dota-league", "com-orkut.ungraph", "graph500-24", "uniform-24", "twitter-2010")
+FIGURE_STAGES = tuple(f"figure{n}" for n in range(8, 14))
+EXPERIMENT_STAGES = {"main", "studies", "batch", "tables", *FIGURE_STAGES}
 SYSTEMS = {"radixgraph": "radixgraph", "bvgt": "bvgt", "teseo": "teseo.13", "sortledton": "sortledton.4", "gtx": "gtx"}
+
+
+def gfe_job_name(system, spec, experiment, variant=""):
+    return "-".join(filter(None, [experiment, system, spec["name"], variant]))
 
 
 def atomic_json(path, value):
@@ -55,6 +62,8 @@ class Pipeline:
                                    properties=self.datasets / (name + ".properties"),
                                    optimizer=self.datasets / (name + ".v")) for name in args.datasets]
         self.jobs = []
+        self.progress = None
+        self.progress_pending = set()
         self.manifest_path = self.output / "manifest.json"
         if self.manifest_path.exists():
             if args.stages != ["report"]:
@@ -77,6 +86,42 @@ class Pipeline:
 
     def save(self):
         atomic_json(self.manifest_path, self.manifest)
+
+    def planned_jobs(self, stages):
+        """Count fixed benchmark tasks; adaptive optimizer calls are setup."""
+        from studies import planned_study_jobs
+        from batch_baselines import planned_batch_jobs
+
+        names = {"report"}
+        if not self.args.skip_prepare and stages & ({"prepare"} | EXPERIMENT_STAGES):
+            names.add("prepare-data")
+        if "main" in stages or stages & set(FIGURE_STAGES[:4]):
+            figures = None if "main" in stages else stages & set(FIGURE_STAGES[:4])
+            names.update(gfe_job_name(system, spec, experiment, variant)
+                         for system, spec, experiment, variant, _ in self.main_jobs(figures))
+        artifacts = study_artifacts(stages)
+        if artifacts:
+            names.update(planned_study_jobs(self.profile, self.args.datasets, artifacts))
+        if "batch" in stages:
+            names.update(planned_batch_jobs(self.profile, self.args.datasets))
+        return names
+
+    def start_progress(self, stages):
+        if self.args.no_progress:
+            return
+        from progress import ProgressBar
+        self.progress_pending = self.planned_jobs(stages)
+        self.progress = ProgressBar(len(self.progress_pending))
+
+    def message(self, text):
+        if self.progress:
+            self.progress.clear()
+        print(text, flush=True)
+
+    def complete_progress(self, name, status):
+        if self.progress and name in self.progress_pending and status != "interrupted":
+            self.progress_pending.remove(name)
+            self.progress.complete(name, status)
 
     def snapshot_inputs(self):
         marker = self.datasets / ".profile"
@@ -106,7 +151,8 @@ class Pipeline:
         result = dict(name=name, status=status, reason=reason, metadata=metadata or {}, log="", exit_code=None)
         self.jobs.append(result)
         self.save()
-        print(f"[{status}] {name}: {reason}", flush=True)
+        self.message(f"[{status}] {name}: {reason}")
+        self.complete_progress(name, status)
         return result
 
     def run(self, name, command, cwd, input_text=None, metadata=None):
@@ -118,14 +164,26 @@ class Pipeline:
                       started_utc=datetime.now(timezone.utc).isoformat())
         self.jobs.append(result)
         self.save()
-        print(f"[run] {name}: {shlex.join(command)}", flush=True)
+        self.message(f"[run] {name}: {shlex.join(command)}")
+        if self.progress:
+            self.progress.start(name)
         started = time.monotonic()
         process = None
         interrupted = False
+        refresh_stop = threading.Event()
+        refresh_thread = None
+
+        def refresh_progress():
+            while not refresh_stop.wait(max(.01, self.progress.interval)):
+                self.progress.refresh()
+
         with logfile.open("w") as stream:
             try:
                 process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                                            stdout=stream, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                if self.progress:
+                    refresh_thread = threading.Thread(target=refresh_progress, daemon=True)
+                    refresh_thread.start()
                 process.communicate(input=input_text, timeout=self.args.timeout_hours * 3600)
                 result.update(exit_code=process.returncode, status="ok" if process.returncode == 0 else "failed")
             except subprocess.TimeoutExpired:
@@ -139,9 +197,14 @@ class Pipeline:
             except OSError as error:
                 stream.write(str(error) + "\n")
                 result.update(status="failed", exit_code=127, reason=str(error))
+            finally:
+                refresh_stop.set()
+                if refresh_thread:
+                    refresh_thread.join()
         result["elapsed_seconds"] = time.monotonic() - started
         self.save()
-        print(f"[{result['status']}] {name} ({result['elapsed_seconds']:.1f}s)", flush=True)
+        self.message(f"[{result['status']}] {name} ({result['elapsed_seconds']:.1f}s)")
+        self.complete_progress(name, result["status"])
         if interrupted:
             raise KeyboardInterrupt
         return result
@@ -170,7 +233,7 @@ class Pipeline:
     def gfe_job(self, system, spec, experiment, extra=None, variant="", metadata=None):
         meta = dict(suite="gfe", system=SYSTEMS[system], dataset=spec["name"], experiment=experiment)
         meta.update(metadata or {})
-        name = "-".join(filter(None, [experiment, system, spec["name"], variant]))
+        name = gfe_job_name(system, spec, experiment, variant)
         if (self.profile == "paper" and spec["name"] == "twitter-2010"
                 and system in ("teseo", "sortledton", "gtx") and experiment in ("random", "vertices", "analytics")):
             return self.note(name, "expected_omission", "Twitter run omitted as in the paper (baseline failure/timeout)", meta)
@@ -202,32 +265,47 @@ class Pipeline:
         command += extra or []
         return self.run(name, command, self.gfe_work, metadata=meta)
 
-    def run_main(self):
+    def main_jobs(self, figures=None):
+        figures = set(figures) if figures is not None else set(FIGURE_STAGES[:4])
         for system in self.args.systems:
             for spec in self.dataset_specs:
                 for experiment in ("random", "vertices", "analytics"):
-                    self.gfe_job(system, spec, experiment)
-                if spec["name"] in ("graph500-24", "uniform-24"):
+                    if ("figure10" if experiment == "analytics" else "figure8") in figures:
+                        yield system, spec, experiment, "", None
+                if "figure9" in figures and spec["name"] in ("graph500-24", "uniform-24"):
                     for experiment in ("mixed", "delete"):
-                        self.gfe_job(system, spec, experiment)
+                        yield system, spec, experiment, "", None
         dota = next((s for s in self.dataset_specs if s["name"] == "dota-league"), None)
-        if dota:
+        if dota and "figure11" in figures:
             for system in (s for s in self.args.systems if s in ("radixgraph", "gtx")):
                 for hop in (1, 2):
                     for count in ([4, 8, 16, 32] if self.profile == "paper" else [1, 2]):
                         for axis in ("read", "write"):
                             fixed = 32 if self.profile == "paper" else 2
-                            self.gfe_job(system, dota, "concurrent", variant=f"{hop}hop-{axis}-{count}",
-                                         metadata=dict(hop=hop, axis=axis, count=count,
-                                                       read_threads=count if axis == "read" else fixed,
-                                                       write_threads=count if axis == "write" else fixed))
+                            yield (system, dota, "concurrent", f"{hop}hop-{axis}-{count}",
+                                   dict(hop=hop, axis=axis, count=count,
+                                        read_threads=count if axis == "read" else fixed,
+                                        write_threads=count if axis == "write" else fixed))
+
+    def run_main(self, figures=None):
+        for system, spec, experiment, variant, metadata in self.main_jobs(figures):
+            self.gfe_job(system, spec, experiment, variant=variant, metadata=metadata)
+
+
+def study_artifacts(stages):
+    artifacts = stages & {"figure12", "figure13"}
+    if "studies" in stages:
+        artifacts |= {"figure12", "figure13", "table5", "table6", "table7"}
+    if "tables" in stages:
+        artifacts |= {"table5", "table6", "table7"}
+    return artifacts
 
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     result.add_argument("--profile", choices=("paper", "smoke"), default=os.getenv("PROFILE", "paper"),
                         help="smoke uses tiny synthetic fixtures and cannot reproduce paper measurements")
-    result.add_argument("--stages", type=lambda v: split_names(v, ("all", "prepare", "main", "studies", "batch", "report")), default=["all"],
+    result.add_argument("--stages", type=lambda v: split_names(v, ("all", "prepare", "main", "studies", "batch", "tables", "report", *FIGURE_STAGES)), default=["all"],
                         help="comma-separated stages; reports are always exported, including on failures")
     result.add_argument("--gfe-dir", type=Path, default=Path(os.getenv("GFE_DIR", "/workspace/gfe_driver")))
     result.add_argument("--radix-dir", type=Path, default=Path(os.getenv("RADIX_DIR", "/workspace/RadixGraph")))
@@ -239,6 +317,7 @@ def parser():
     result.add_argument("--systems", type=lambda v: split_names(v, SYSTEMS), default=list(SYSTEMS), help="GFE systems, comma-separated")
     result.add_argument("--datasets", type=lambda v: split_names(v, DATASETS), default=list(DATASETS), help="dataset stems, comma-separated")
     result.add_argument("--skip-prepare", action="store_true", help="use an already prepared data cache")
+    result.add_argument("--no-progress", action="store_true", help="disable the job progress bar and periodic updates")
     result.add_argument("--check-requirements", action="store_true",
                         help="check machine resources and exit without preparing data or running experiments")
     result.add_argument("--force", action="store_true",
@@ -284,20 +363,24 @@ def export(p):
     if "all" in stages:
         stages = {"prepare", "main", "studies", "batch"}
     expected = []
-    if "main" in stages:
-        expected += ["figures/figure8.pdf", "figures/figure10.pdf"]
-        if set(config["datasets"]) & {"graph500-24", "uniform-24"}:
+    if "main" in stages or stages & set(FIGURE_STAGES[:4]):
+        expected += [f"figures/{figure}.pdf" for figure in ("figure8", "figure10")
+                     if "main" in stages or figure in stages]
+        if ("main" in stages or "figure9" in stages) and set(config["datasets"]) & {"graph500-24", "uniform-24"}:
             expected.append("figures/figure9.pdf")
-        if (p.profile == "paper" and "dota-league" in config["datasets"]
+        if (("main" in stages or "figure11" in stages) and p.profile == "paper" and "dota-league" in config["datasets"]
                 and {"radixgraph", "gtx"} <= set(config["systems"])):
             expected.append("figures/figure11.pdf")
-    if "studies" in stages:
-        expected += ["figures/figure12_a.pdf", "figures/figure12_b.pdf", "figures/figure13.pdf",
-                     "tables/figure12_transformations.csv",
-                     "tables/table5.csv", "tables/table6.csv", "tables/table7.csv",
-                     "figures/table5.pdf", "figures/table6.pdf", "figures/table7.pdf"]
+    if "studies" in stages or "figure12" in stages:
+        expected += ["figures/figure12_a.pdf", "figures/figure12_b.pdf",
+                     "tables/figure12_transformations.csv"]
         if p.profile == "paper":
             expected.append("figures/figure12_c.pdf")
+    if "studies" in stages or "figure13" in stages:
+        expected.append("figures/figure13.pdf")
+    if stages & {"studies", "tables"}:
+        expected += [f"{folder}/table{n}.{extension}" for n in (5, 6, 7)
+                     for folder, extension in (("tables", "csv"), ("figures", "pdf"))]
     if "batch" in stages:
         expected += ["tables/table7_baselines.csv", "tables/table7.csv"]
         if "figures/table7.pdf" not in expected:
@@ -306,7 +389,9 @@ def export(p):
     for path in missing:
         if not any(j.get("name") == "missing-artifact-" + path for j in p.jobs):
             p.note("missing-artifact-" + path, "failed", "Expected artifact was not produced: " + path)
-    full_scope = (stages >= {"main", "studies", "batch"} and set(config["datasets"]) == set(DATASETS)
+    full_scope = (("main" in stages or set(FIGURE_STAGES[:4]) <= stages)
+                  and ("studies" in stages or {"figure12", "figure13", "tables"} <= stages)
+                  and "batch" in stages and set(config["datasets"]) == set(DATASETS)
                   and set(config["systems"]) == set(SYSTEMS))
     atomic_json(p.output / "coverage.json", dict(full_experiment_scope=full_scope, profile=p.profile,
                                                 expected_artifacts=expected, missing_artifacts=missing,
@@ -362,20 +447,21 @@ def main():
     p.save()
     print("Output directory: " + str(p.output), flush=True)
     stages = {"prepare", "main", "studies", "batch"} if "all" in args.stages else set(args.stages)
+    p.start_progress(stages)
     exit_code = 0
     try:
-        if not args.skip_prepare and (stages & {"prepare", "main", "studies", "batch"}):
+        if not args.skip_prepare and (stages & ({"prepare"} | EXPERIMENT_STAGES)):
             env = ["env", f"DATA_DIR={p.datasets}", f"GFE_DIR={p.gfe}", f"PROFILE={p.profile}"]
             prepared = p.run("prepare-data", env + ["bash", HERE / "prepare-data.sh"], HERE)
             if prepared["status"] != "ok":
                 raise RuntimeError("Dataset preparation failed; see prepare-data.log")
-        if stages & {"main", "studies", "batch"}:
+        if stages & EXPERIMENT_STAGES:
             p.snapshot_inputs()
-        if "main" in stages:
-            p.run_main()
-        if "studies" in stages:
+        if "main" in stages or stages & set(FIGURE_STAGES[:4]):
+            p.run_main(None if "main" in stages else stages & set(FIGURE_STAGES[:4]))
+        if stages & {"studies", "tables", "figure12", "figure13"}:
             from studies import run_studies
-            run_studies(p)
+            run_studies(p, study_artifacts(stages))
         if "batch" in stages:
             from batch_baselines import run_batch_baselines
             run_batch_baselines(p)
@@ -387,12 +473,24 @@ def main():
         p.note("pipeline-error", "failed", str(error))
     finally:
         try:
-            if export(p):
+            if p.progress:
+                p.progress.start("report")
+            failures = export(p)
+            p.complete_progress("report", "failed" if failures else "ok")
+            if failures:
                 exit_code = exit_code or 1
+        except KeyboardInterrupt:
+            p.note("report-interrupted", "interrupted", "Report interrupted; completed artifacts retained")
+            exit_code = 130
         except Exception as error:
             p.note("report-error", "failed", str(error))
+            p.complete_progress("report", "failed")
             exit_code = exit_code or 1
-        print("Artifacts retained at " + str(p.output), flush=True)
+        finally:
+            if p.progress:
+                status = "interrupted" if exit_code == 130 else "incomplete" if exit_code else "finished"
+                p.progress.finish(status)
+        p.message("Artifacts retained at " + str(p.output))
     return exit_code
 
 

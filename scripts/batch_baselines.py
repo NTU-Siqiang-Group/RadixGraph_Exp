@@ -28,6 +28,17 @@ PROTOCOL = {
 }
 
 
+def _dataset_selected(profile, name):
+    return profile != "paper" or name in PAPER_DATASETS
+
+
+def planned_batch_jobs(profile, dataset_names):
+    """Return native baseline benchmark names in execution order."""
+    return [f"batch-{slug}-{name}"
+            for name in dataset_names if _dataset_selected(profile, name)
+            for slug in BASELINES]
+
+
 def parse_measurements(text):
     """Read machine-readable markers while ignoring verbose upstream logging."""
     memory = None
@@ -75,7 +86,7 @@ def run_batch_baselines(p):
     root = Path(os.environ.get("RADIXGRAPH_BATCH_ROOT", "/workspace/batch"))
     records = []
     for spec in p.dataset_specs:
-        if p.profile == "paper" and spec["name"] not in PAPER_DATASETS:
+        if not _dataset_selected(p.profile, spec["name"]):
             continue
         for slug, (method, backend) in BASELINES.items():
             name = f"batch-{slug}-{spec['name']}"

@@ -1,13 +1,16 @@
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from pipeline import Pipeline, parser
+from pipeline import Pipeline, main, parser
+from progress import ProgressBar
 from gfe_reports import seconds, parse_log, database_series, delete_series, resolve_evidence
 
 
@@ -103,17 +106,126 @@ class RunnerTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def enable_progress(self, names, interval=.01):
+        self.progress_output = io.StringIO()
+        self.p.progress_pending = set(names)
+        self.p.progress = ProgressBar(len(names), stream=self.progress_output, interval=interval)
+
+    def test_plan_respects_selected_stages_systems_and_datasets(self):
+        self.p.args.systems = ["gtx"]
+        self.p.args.datasets = ["com-lj.ungraph"]
+        self.p.dataset_specs = self.p.dataset_specs[:1]
+        self.p.args.skip_prepare = True
+        self.assertEqual(self.p.planned_jobs({"figure8"}),
+                         {"random-gtx-com-lj.ungraph", "vertices-gtx-com-lj.ungraph", "report"})
+        self.assertEqual(self.p.planned_jobs({"figure9"}), {"report"})
+        self.assertEqual(self.p.planned_jobs({"report"}), {"report"})
+        self.p.args.skip_prepare = False
+        self.assertEqual(self.p.planned_jobs({"prepare"}), {"prepare-data", "report"})
+
+    def test_grouped_and_individual_stages_have_the_same_plan(self):
+        grouped = self.p.planned_jobs({"main", "studies", "batch"})
+        individual = self.p.planned_jobs({"figure8", "figure9", "figure10", "figure11",
+                                          "figure12", "figure13", "tables", "batch"})
+        self.assertEqual(grouped, individual)
+        self.assertFalse(any(name.startswith("optimizer-") for name in grouped))
+
+    def test_setup_does_not_advance_bar_and_omissions_count_once(self):
+        self.enable_progress({"benchmark"})
+        self.p.note("optimizer", "failed", "Setup failed")
+        self.assertEqual(self.p.progress.completed, 0)
+        self.p.note("benchmark", "expected_omission", "Omitted as in paper")
+        self.p.complete_progress("benchmark", "expected_omission")
+        self.assertEqual(self.p.progress.completed, 1)
+        self.assertEqual(self.p.progress.failed, 0)
+
+    def test_progress_polling_preserves_stdin_and_job_output(self):
+        self.enable_progress({"stdin"})
+        payload = "test input\n" * 10000
+        result = self.p.run("stdin", [sys.executable, "-c",
+                            "import sys, time; time.sleep(.04); data=sys.stdin.read(); "
+                            "time.sleep(.04); sys.stdout.write(data)"], self.root, input_text=payload)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(Path(result["log"]).read_text(), payload)
+        self.assertEqual(self.p.progress.completed, 1)
+        self.assertGreater(len(self.progress_output.getvalue().splitlines()), 2)
+        self.assertNotIn("\r", self.progress_output.getvalue())
+
+    def test_interrupt_keeps_durable_status_without_counting_unfinished_job(self):
+        self.enable_progress({"interrupt"})
+        process = Mock()
+        process.communicate.side_effect = KeyboardInterrupt
+        with patch("pipeline.subprocess.Popen", return_value=process), patch.object(self.p, "stop") as stop:
+            with self.assertRaises(KeyboardInterrupt):
+                self.p.run("interrupt", ["benchmark"], self.root)
+        stop.assert_called_once_with(process)
+        saved = json.loads(self.p.manifest_path.read_text())["jobs"][-1]
+        self.assertEqual(saved["status"], "interrupted")
+        self.assertEqual(saved["exit_code"], 130)
+        self.assertEqual(self.p.progress.completed, 0)
+
+    def test_cli_report_progress_and_opt_out(self):
+        for disabled in (False, True):
+            args = ["run.sh", "--stages", "report", "--run-dir", str(self.p.output)]
+            if disabled:
+                args.append("--no-progress")
+            with self.subTest(disabled=disabled), patch.object(sys, "argv", args):
+                with patch("pipeline.export", return_value=[]), redirect_stderr(io.StringIO()) as progress:
+                    with redirect_stdout(io.StringIO()):
+                        self.assertEqual(main(), 0)
+            if disabled:
+                self.assertEqual(progress.getvalue(), "")
+            else:
+                self.assertIn("100% (1/1 jobs)", progress.getvalue())
+                self.assertIn("finished", progress.getvalue())
+
+    def test_cli_interrupt_retains_partial_bar_while_exporting(self):
+        args = ["run.sh", "--profile", "smoke", "--stages", "figure8", "--skip-prepare",
+                "--run-dir", str(self.root / "interrupted")]
+        with patch.object(sys, "argv", args), patch("pipeline.Pipeline.run_main", side_effect=KeyboardInterrupt):
+            with patch("pipeline.export", return_value=[]), redirect_stderr(io.StringIO()) as progress:
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(), 130)
+        self.assertIn("interrupted", progress.getvalue())
+        self.assertNotIn("100%", progress.getvalue())
+
+    def test_figure_stages_select_only_their_benchmarks(self):
+        expected = {"figure8": {"random", "vertices"}, "figure9": {"mixed", "delete"},
+                    "figure10": {"analytics"}, "figure11": {"concurrent"}}
+        for stage, experiments in expected.items():
+            with self.subTest(stage=stage), patch.object(self.p, "gfe_job") as job:
+                self.p.run_main({stage})
+                self.assertEqual({call.args[2] for call in job.call_args_list}, experiments)
+                if stage == "figure9":
+                    self.assertEqual({call.args[1]["name"] for call in job.call_args_list},
+                                     {"graph500-24", "uniform-24"})
+
+    def test_study_figure_stages_do_not_run_other_artifacts(self):
+        from studies import run_studies
+        for stage in ("figure12", "figure13"):
+            with self.subTest(stage=stage), patch.object(self.p, "run", return_value={"status": "failed", "log": ""}) as run:
+                run_studies(self.p, {stage})
+                self.assertTrue(run.called)
+                self.assertTrue(all(call.kwargs["metadata"]["artifact"] == stage
+                                    for call in run.call_args_list))
+
     def test_timeout_keeps_log_and_durable_status(self):
+        self.enable_progress({"timeout"})
         self.p.args.timeout_hours = .00002
         result = self.p.run("timeout", [sys.executable, "-u", "-c", "import time; print('partial output'); time.sleep(10)"], self.root)
         self.assertEqual(result["status"], "timeout")
         self.assertIn("partial output", Path(result["log"]).read_text())
         self.assertEqual(json.loads(self.p.manifest_path.read_text())["jobs"][-1]["exit_code"], 124)
+        self.assertEqual(self.p.progress.completed, 1)
+        self.assertEqual(self.p.progress.failed, 1)
 
     def test_missing_executable_is_recorded(self):
+        self.enable_progress({"missing"})
         result = self.p.run("missing", [self.root / "missing"], self.root)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["exit_code"], 127)
+        self.assertEqual(self.p.progress.completed, 1)
+        self.assertEqual(self.p.progress.failed, 1)
 
     def test_runtime_writes_use_output_with_read_only_sources(self):
         optimizer = self.p.gfe / "optimizer"

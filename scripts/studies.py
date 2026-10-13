@@ -14,6 +14,54 @@ except ImportError:
     from study_reports import parse_transform, render_study_reports
 
 
+STUDY_ARTIFACTS = frozenset({"figure12", "figure13", "table5", "table6", "table7"})
+MEMORY_VARIANTS = ("Updated", "Trailing", "vEB")
+WORKLOADS = ("u", "s", "h")
+INDEX_BITS = (24, 32)
+UPDATE_VARIANTS = ("sort", "art")
+ANALYTICS_VARIANTS = ("sort", "sort-no-chain")
+PAPER_BATCH_DATASETS = frozenset({"lj", "livejournal", "com-lj.ungraph", "orkut",
+                                  "com-orkut.ungraph", "twitter", "twitter-2010"})
+
+
+def _memory_counts(profile):
+    return (1000, 10000) if profile == "smoke" else (100000, 1000000, 10000000)
+
+
+def _index_counts(profile):
+    return (1000, 10000) if profile == "smoke" else (10000, 100000, 1000000, 10000000)
+
+
+def _batch_dataset_selected(profile, name):
+    return profile == "smoke" or name.lower() in PAPER_BATCH_DATASETS
+
+
+def planned_study_jobs(profile, dataset_names, artifacts=None):
+    """Return the fixed benchmark names in execution order.
+
+    Figure 12 optimizer calls are adaptive prerequisite work and are excluded.
+    Missing prerequisites still produce a record for each planned benchmark.
+    """
+    artifacts = set(artifacts) if artifacts is not None else STUDY_ARTIFACTS
+    names = []
+    if "figure12" in artifacts:
+        names.append("figure12-transformation")
+        names.extend(f"figure12-memory-{variant.lower()}-{n}"
+                     for n in _memory_counts(profile) for variant in MEMORY_VARIANTS)
+    if "figure13" in artifacts:
+        names.extend(f"figure13-workload-{workload}" for workload in WORKLOADS)
+    if "table5" in artifacts:
+        names.extend(f"table5-index-{n}-{bits}"
+                     for n in _index_counts(profile) for bits in INDEX_BITS)
+    for name in dataset_names:
+        if "table6" in artifacts:
+            names.extend(f"table6-updates-{variant}-{name}" for variant in UPDATE_VARIANTS)
+            names.extend(f"table6-analytics-{variant}-{name}" for variant in ANALYTICS_VARIANTS)
+        if "table7" in artifacts and _batch_dataset_selected(profile, name):
+            names.append(f"table7-radixgraph-{name}")
+    return names
+
+
 def find_trailing_fanout(n, updated, configurations, optimize):
     """Find the immediately preceding distinct optimum below ``n``.
 
@@ -53,12 +101,13 @@ def find_trailing_fanout(n, updated, configurations, optimize):
     return candidate
 
 
-def run_studies(p):
+def run_studies(p, artifacts=None):
     """Run Figures 12–13, Tables 5–6, and RadixGraph's Table 7 rows.
 
     ``p`` supplies output/radix Paths, profile, threads, dataset_specs, and a
     run(name, argv, cwd, input_text=None, metadata=None) method.
     """
+    artifacts = set(artifacts) if artifacts is not None else STUDY_ARTIFACTS
     root = Path(p.output) / "studies"
     root.mkdir(parents=True, exist_ok=True)
     index = root / "records.json"
@@ -133,65 +182,65 @@ def run_studies(p):
     try:
         smoke = p.profile == "smoke"
         maximum, minimum = (10000, 1000) if smoke else (10000000, 100000)
-        command = [binary("sort", "test_transform_continuous")]
-        if smoke:
-            command.extend([str(maximum), str(minimum)])
-        transform = run("figure12-transformation", command,
-                        {"artifact": "figure12", "kind": "transformation",
-                         "n_min": minimum, "n_max": maximum, "bits": 32})
-        configurations, _ = parse_transform(log_text(transform))
-        counts = (1000, 10000) if smoke else (100000, 1000000, 10000000)
-        for n in counts:
-            updated = optimizer(n, "updated")
-            trailing = find_trailing_fanout(n, updated, configurations,
-                                            lambda value: optimizer(value, "trailing"))
-            for variant, fanout in (("Updated", updated), ("Trailing", trailing),
-                                    ("vEB", [16, 8, 4, 2, 2])):
-                name = f"figure12-memory-{variant.lower()}-{n}"
-                meta = {"artifact": "figure12", "kind": "memory", "n": n,
-                        "bits": 32, "variant": variant, "fanout": fanout}
-                if fanout is None:
-                    unavailable(name, meta, "Optimizer did not produce valid fanout settings; see optimizer log.")
-                    continue
-                stdin = f"{n}\n32\n5\n{' '.join(map(str, fanout))}\n"
-                run(name, [binary("sort", "test_trie")], meta, stdin)
+        if "figure12" in artifacts:
+            command = [binary("sort", "test_transform_continuous")]
+            if smoke:
+                command.extend([str(maximum), str(minimum)])
+            transform = run("figure12-transformation", command,
+                            {"artifact": "figure12", "kind": "transformation",
+                             "n_min": minimum, "n_max": maximum, "bits": 32})
+            configurations, _ = parse_transform(log_text(transform))
+            for n in _memory_counts(p.profile):
+                updated = optimizer(n, "updated")
+                trailing = find_trailing_fanout(n, updated, configurations,
+                                                lambda value: optimizer(value, "trailing"))
+                for variant, fanout in zip(MEMORY_VARIANTS, (updated, trailing, [16, 8, 4, 2, 2])):
+                    name = f"figure12-memory-{variant.lower()}-{n}"
+                    meta = {"artifact": "figure12", "kind": "memory", "n": n,
+                            "bits": 32, "variant": variant, "fanout": fanout}
+                    if fanout is None:
+                        unavailable(name, meta, "Optimizer did not produce valid fanout settings; see optimizer log.")
+                        continue
+                    stdin = f"{n}\n32\n5\n{' '.join(map(str, fanout))}\n"
+                    run(name, [binary("sort", "test_trie")], meta, stdin)
 
-        for workload in ("u", "s", "h"):
-            run(f"figure13-workload-{workload}",
-                [binary("sort", "test_trie_workload")],
-                {"artifact": "figure13", "kind": "workload", "n": maximum,
-                 "bits": 32, "workload": workload}, f"{maximum}\n32\n{workload}\n")
+        if "figure13" in artifacts:
+            for workload in WORKLOADS:
+                run(f"figure13-workload-{workload}",
+                    [binary("sort", "test_trie_workload")],
+                    {"artifact": "figure13", "kind": "workload", "n": maximum,
+                     "bits": 32, "workload": workload}, f"{maximum}\n32\n{workload}\n")
 
-        counts = (1000, 10000) if smoke else (10000, 100000, 1000000, 10000000)
-        for n in counts:
-            for bits in (24, 32):
-                run(f"table5-index-{n}-{bits}",
-                    [binary("index", "test_vertex_index")],
-                    {"artifact": "table5", "kind": "index", "n": n,
-                     "bits": bits, "threads": p.threads}, f"{n}\n{bits}\n")
+        if "table5" in artifacts:
+            for n in _index_counts(p.profile):
+                for bits in INDEX_BITS:
+                    run(f"table5-index-{n}-{bits}",
+                        [binary("index", "test_vertex_index")],
+                        {"artifact": "table5", "kind": "index", "n": n,
+                         "bits": bits, "threads": p.threads}, f"{n}\n{bits}\n")
 
         for dataset in p.dataset_specs:
             name, edge = dataset["name"], Path(dataset["edge"])
-            for variant in ("sort", "art"):
-                meta = {"artifact": "table6", "kind": "updates",
-                        "dataset": name, "variant": variant, "threads": p.threads}
-                if edge.is_file():
-                    run(f"table6-updates-{variant}-{name}",
-                        [binary(variant, "test_radixgraph"), edge], meta)
-                else:
-                    unavailable(f"table6-updates-{variant}-{name}", meta,
-                                f"Dataset edge file is missing: {edge}")
-            for variant in ("sort", "sort-no-chain"):
-                meta = {"artifact": "table6", "kind": "analytics",
-                        "dataset": name, "variant": variant, "threads": p.threads}
-                if edge.is_file():
-                    run(f"table6-analytics-{variant}-{name}",
-                        [binary(variant, "test_analytics"), edge], meta)
-                else:
-                    unavailable(f"table6-analytics-{variant}-{name}", meta,
-                                f"Dataset edge file is missing: {edge}")
-            if name.lower() in ("lj", "livejournal", "com-lj.ungraph", "orkut",
-                                 "com-orkut.ungraph", "twitter", "twitter-2010") or smoke:
+            if "table6" in artifacts:
+                for variant in UPDATE_VARIANTS:
+                    meta = {"artifact": "table6", "kind": "updates",
+                            "dataset": name, "variant": variant, "threads": p.threads}
+                    if edge.is_file():
+                        run(f"table6-updates-{variant}-{name}",
+                            [binary(variant, "test_radixgraph"), edge], meta)
+                    else:
+                        unavailable(f"table6-updates-{variant}-{name}", meta,
+                                    f"Dataset edge file is missing: {edge}")
+                for variant in ANALYTICS_VARIANTS:
+                    meta = {"artifact": "table6", "kind": "analytics",
+                            "dataset": name, "variant": variant, "threads": p.threads}
+                    if edge.is_file():
+                        run(f"table6-analytics-{variant}-{name}",
+                            [binary(variant, "test_analytics"), edge], meta)
+                    else:
+                        unavailable(f"table6-analytics-{variant}-{name}", meta,
+                                    f"Dataset edge file is missing: {edge}")
+            if "table7" in artifacts and _batch_dataset_selected(p.profile, name):
                 meta = {"artifact": "table7", "kind": "batch", "dataset": name,
                         "method": "RadixGraph", "threads": p.threads}
                 if edge.is_file():

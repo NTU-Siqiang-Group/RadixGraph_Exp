@@ -80,12 +80,29 @@ Run these stages in order:
 # 1. Download datasets, preprocess inputs and generate graphlogs.
 run_radixgraph --stages prepare
 
-# 2. Run the GFE benchmarks for Figures 8–11.
-run_radixgraph --stages main --skip-prepare
+# 2. Run Figure 8.
+run_radixgraph --stages figure8 --skip-prepare
 
-# 3. Run case studies and batch updates for Figures 12–13 and Tables 5–7.
-run_radixgraph --stages studies,batch --skip-prepare
+# 3. Run Figure 9.
+run_radixgraph --stages figure9 --skip-prepare
+
+# 4. Run Figure 10.
+run_radixgraph --stages figure10 --skip-prepare
+
+# 5. Run Figure 11.
+run_radixgraph --stages figure11 --skip-prepare
+
+# 6. Run Figure 12 (all panels).
+run_radixgraph --stages figure12 --skip-prepare
+
+# 7. Run Figure 13.
+run_radixgraph --stages figure13 --skip-prepare
+
+# 8. Run Tables 5–7, including batch-update baselines.
+run_radixgraph --stages tables,batch --skip-prepare
 ```
+
+Figure 12(d) is exported as `tables/figure12_transformations.csv`. Multiple stages can be selected with commas.
 
 Each invocation creates a new `output/<UTC-run-id>/` and prints its path. All stages reuse the same `data/` cache, and figures and tables are exported automatically after each invocation.
 
@@ -99,14 +116,20 @@ Existing run directories can be reused only for `report`; experiment stages alwa
 
 ### Estimated runtime
 
-Allow approximately **3–7 days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above.
+Allow **several days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above.
 
 | Stage | Estimated time |
 | --- | --- |
 | Docker build, if needed | 30–90 minutes |
-| Download, preprocessing and graphlog generation | 4–24 hours |
-| All experiments | 2–6 days |
-| Plotting and table export | A few minutes |
+| 1. `prepare`: download and preprocessing | About 12 hours |
+| 2. `figure8`: Figure 8 | About 3 hours |
+| 3. `figure9`: Figure 9 | About 3 hours |
+| 4. `figure10`: Figure 10 | About 5 days |
+| 5. `figure11`: Figure 11 | About 3 hours |
+| 6. `figure12`: Figure 12, all panels | Less than 1 hour |
+| 7. `figure13`: Figure 13 | Less than 1 hous |
+| 8. `tables,batch`: Tables 5–7 and batch-update baselines | About 24 hours |
+| `report`: regenerate plots and tables from an existing run | A few minutes |
 
 ### Bypass requirement checks
 
