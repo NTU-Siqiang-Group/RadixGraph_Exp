@@ -111,9 +111,9 @@ run_radixgraph --stages figure13 --skip-prepare
 run_radixgraph --stages tables,batch --skip-prepare
 ```
 
-Figure 12(d) is exported as `tables/figure12_transformations.csv`. Multiple stages can be selected with commas.
+Multiple stages can be selected with commas.
 
-Each invocation creates a new `output/<UTC-run-id>/` and prints its path. All stages reuse the same `data/` cache, and figures and tables are exported automatically after each invocation.
+Each invocation creates a new `output/<UTC-run-id>/` and prints its path, and resulting figures are stored in `output/<UTC-run-id>/figures`. Note that Figure 12(d) is exported as `tables/figure12_transformations.csv`.
 
 To regenerate figures and tables from an existing run without rerunning experiments, replace `<UTC-run-id>` with that run's directory name:
 
