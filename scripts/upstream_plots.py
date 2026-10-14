@@ -1,4 +1,4 @@
-"""Stage measured inputs and invoke the original plotting scripts unchanged."""
+"""Stage measured inputs and invoke upstream plots without editing their source."""
 import csv
 import hashlib
 import json
@@ -36,6 +36,32 @@ tree.body[calls[0]:calls[0] + 1] = ast.parse(
     'mixed_u24 = __measured_mixed_series["uniform-24"]\\n').body
 namespace = {"__name__": "__main__", "__file__": str(source),
              "__measured_mixed_series": request["series"]}
+exec(compile(tree, str(source), "exec"), namespace)
+'''
+
+
+CONCURRENT_INVOKER = '''"""Fix Figure 11's multiplier placement, retaining upstream fonts and data."""
+import ast
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+tree = ast.parse(source.read_text(), filename=str(source))
+plots = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "plot"]
+blocks = [node for plot in plots for node in ast.walk(plot)
+          if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "float"]
+expected = ast.parse(
+    "ax.yaxis.get_offset_text().set_fontsize(35)\\n"
+    "ax.yaxis.offsetText.set_visible(False)\\n"
+    "ax.text(-0.25, 2.5e6, '1e6', fontsize=35, va='top', ha='left')\\n").body
+if (len(plots) != 1 or len(blocks) != 1 or blocks[0].orelse
+        or [ast.dump(node) for node in blocks[0].body] != [ast.dump(node) for node in expected]):
+    raise SystemExit("Upstream concurrent plotting layout changed; expected the fixed multiplier block")
+# The fixed data coordinate lies outside the axes for different measured ranges,
+# causing tight_layout to collapse the panels. Use the native multiplier, whose
+# position and exponent follow the axes, keeping its original 35pt font setting.
+blocks[0].body = blocks[0].body[:1]
+namespace = {"__name__": "__main__", "__file__": str(source)}
 exec(compile(tree, str(source), "exec"), namespace)
 '''
 
@@ -140,22 +166,30 @@ def _copy_figure(output, work, source_name, alias):
     return [str(p.relative_to(output)) for p in (original, canonical)]
 
 
-def _plot(output, gfe, work, script, artifact, filename, input_text=None, notes=None, mixed_rows=None):
+def _plot(output, gfe, work, script, artifact, filename, input_text=None, notes=None, mixed_rows=None,
+          concurrent_layout=False):
     source = gfe / "scripts" / script
     provenance = {}
-    if mixed_rows is None:
+    if mixed_rows is None and not concurrent_layout:
         execution = run_original(source, work, input_text)
     else:
         source_hash = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
-        invoker = work / "invoke_mixed.py"
-        invoker.write_text(MIXED_INVOKER)
-        request = dict(source=str(source), series=mixed_checkpoint_series(mixed_rows))
-        inputs = work / "mixed_checkpoints.json"
-        inputs.write_text(json.dumps(request, indent=2) + "\n")
-        execution = run_original(invoker, work, json.dumps(request))
+        if concurrent_layout:
+            invoker = work / "invoke_concurrent.py"
+            invoker.write_text(CONCURRENT_INVOKER)
+            execution = run_original(invoker, work, input_text, arguments=[source])
+            provenance = dict(layout_adapter="automatic scientific multiplier; upstream fonts retained")
+        else:
+            invoker = work / "invoke_mixed.py"
+            invoker.write_text(MIXED_INVOKER)
+            request = dict(source=str(source), series=mixed_checkpoint_series(mixed_rows))
+            inputs = work / "mixed_checkpoints.json"
+            inputs.write_text(json.dumps(request, indent=2) + "\n")
+            execution = run_original(invoker, work, json.dumps(request))
+            provenance = dict(input_adapter="measured mixed-update progress",
+                              checkpoints=str(inputs.relative_to(output)))
         unchanged = source.is_file() and hashlib.sha256(source.read_bytes()).hexdigest() == source_hash
-        provenance = dict(source_script=str(source), source_sha256=source_hash, source_unchanged=unchanged,
-                          input_adapter="measured mixed-update progress", checkpoints=str(inputs.relative_to(output)))
+        provenance.update(source_script=str(source), source_sha256=source_hash, source_unchanged=unchanged)
         if not unchanged:
             execution.update(status="failed", reason="Original plotting source is missing or changed during execution")
     figures = _copy_figure(output, work, filename, artifact) if execution["status"] == "ok" else []
@@ -273,7 +307,9 @@ def render_original_plots(output, records, gfe, radix, profile):
             plots.append(_plot(output, gfe, work, "plot_concurrent.py", "figure11", "combined_plots4.pdf",
                                "concurrent-1-hop\nconcurrent-2-hop\n", notes=[
                                    "Original constants are retained: 317727 one-hop IDs and 508703130 update operations.",
-                                   "The measurement CSV uses the actual counts and remains the authoritative numeric export."]))
+                                   "The measurement CSV uses the actual counts and remains the authoritative numeric export.",
+                                   "The scientific multiplier follows the axes automatically to prevent collapsed panels; all upstream font settings are retained."],
+                               concurrent_layout=True))
         else:
             plots.append(dict(artifact="figure11", status="skipped", figures=[], reason=
                               "The original renderer requires both systems at 4/8/16/32 threads and paper operation counts. See tables/figure11.csv."))
