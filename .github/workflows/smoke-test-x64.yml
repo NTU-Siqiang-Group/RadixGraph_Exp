@@ -70,7 +70,7 @@ jobs:
               assert not Path("/workspace/gfe_driver/libBVGT.a").exists()
           PY
 
-      - name: Run all smoke experiments
+      - name: Run default smoke experiments
         timeout-minutes: 60
         shell: bash
         run: |
@@ -91,6 +91,7 @@ jobs:
           EXPECTED_ARCH: amd64
         run: |
           python3 - <<'PY'
+          import csv
           import json
           import os
           from pathlib import Path
@@ -107,22 +108,31 @@ jobs:
           arch = os.environ["EXPECTED_ARCH"]
           capabilities = manifest["capabilities"]
           assert capabilities["architecture"] == arch, capabilities
-          assert coverage["full_available_scope"], coverage
+          assert not coverage["full_available_scope"], coverage
+          assert not coverage["full_experiment_scope"], coverage
           assert manifest["config"]["systems"] == capabilities["available_systems"], manifest["config"]
           if arch == "arm64":
               assert "bvgt" not in capabilities["available_systems"], capabilities
               assert capabilities["excluded_systems"]["bvgt"], capabilities
               assert not any("bvgt" in job["name"] for job in manifest["jobs"]), manifest["jobs"]
-              assert not coverage["full_experiment_scope"], coverage
           else:
               assert "bvgt" in capabilities["available_systems"], capabilities
-              assert coverage["full_experiment_scope"], coverage
+          table_jobs = [job["name"] for job in manifest["jobs"]
+                        if job.get("metadata", {}).get("artifact") in ("table5", "table6", "table7")
+                        or job.get("metadata", {}).get("suite") == "batch_baselines"]
+          assert not table_jobs, table_jobs
           assert not coverage["missing_artifacts"], coverage["missing_artifacts"]
           for artifact in coverage["expected_artifacts"]:
               path = run / artifact
               assert path.is_file() and path.stat().st_size > 0, artifact
           for number in (5, 6, 7):
-              assert f"figures/table{number}.pdf" in artifacts, number
+              assert f"figures/table{number}.pdf" not in artifacts, number
+              assert f"figures/table{number}.pdf" not in coverage["expected_artifacts"], number
+              assert f"tables/table{number}.csv" not in coverage["expected_artifacts"], number
+          # Reporting may retain CSV headers for unselected table stages.
+          for path in (run / "tables").glob("table*.csv"):
+              with path.open(newline="") as stream:
+                  assert not list(csv.DictReader(stream)), path
           for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
               assert not (run / "tables" / f"{name}.md").exists(), name
           assert not list((run / "figures").glob("table*.png")), "Unexpected table PNGs"

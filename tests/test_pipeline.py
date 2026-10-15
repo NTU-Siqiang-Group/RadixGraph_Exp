@@ -1,4 +1,4 @@
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import csv
 import io
 import json
@@ -172,6 +172,63 @@ class RunnerTests(unittest.TestCase):
                                           "figure12", "figure13", "tables", "batch"})
         self.assertEqual(grouped, individual)
         self.assertFalse(any(name.startswith("optimizer-") for name in grouped))
+
+    def test_all_plan_excludes_table_and_batch_jobs_for_both_profiles(self):
+        for profile in ("smoke", "paper"):
+            self.p.profile = profile
+            for selection in (parser().parse_args([]).stages, ["all"]):
+                with self.subTest(profile=profile, selection=selection):
+                    planned = self.p.planned_jobs(selection)
+                    self.assertIn("prepare-data", planned)
+                    self.assertIn("report", planned)
+                    self.assertIn("random-radixgraph-com-lj.ungraph", planned)
+                    self.assertIn("figure12-transformation", planned)
+                    self.assertIn("figure13-workload-u", planned)
+                    self.assertFalse(any(name.startswith(("table5-", "table6-", "table7-", "batch-"))
+                                         for name in planned))
+                    opted_in = self.p.planned_jobs([*selection, "tables", "batch"])
+                    for prefix in ("table5-", "table6-", "table7-", "batch-"):
+                        self.assertTrue(any(name.startswith(prefix) for name in opted_in), prefix)
+
+    def test_cli_default_and_all_run_figures_with_table_and_batch_opt_ins(self):
+        cases = (
+            ("default", [], True, {"figure12", "figure13"}, False),
+            ("all", ["--stages", "all"], True, {"figure12", "figure13"}, False),
+            ("all-tables", ["--stages", "all,tables"], True,
+             {"figure12", "figure13", "table5", "table6", "table7"}, False),
+            ("all-batch", ["--stages", "all,batch"], True, {"figure12", "figure13"}, True),
+            ("all-tables-batch", ["--stages", "all,tables,batch"], True,
+             {"figure12", "figure13", "table5", "table6", "table7"}, True),
+            ("tables-batch", ["--stages", "tables,batch"], False,
+             {"table5", "table6", "table7"}, True),
+            ("studies", ["--stages", "studies"], False,
+             {"figure12", "figure13", "table5", "table6", "table7"}, False),
+        )
+        for profile in ("smoke", "paper"):
+            for label, selection, main_selected, artifacts, batch_selected in cases:
+                with self.subTest(profile=profile, selection=label), ExitStack() as stack:
+                    arguments = ["run.sh", "--profile", profile, "--no-progress",
+                                 "--run-dir", str(self.root / f"cli-{profile}-{label}"), *selection]
+                    stack.enter_context(patch.object(sys, "argv", arguments))
+                    stack.enter_context(patch("preflight.check_requirements", return_value={"status": "ok"}))
+                    stack.enter_context(patch("preflight.print_requirements"))
+                    stack.enter_context(redirect_stdout(io.StringIO()))
+                    prepare = stack.enter_context(patch("pipeline.Pipeline.run", return_value={"status": "ok"}))
+                    run_main = stack.enter_context(patch("pipeline.Pipeline.run_main"))
+                    studies = stack.enter_context(patch("studies.run_studies"))
+                    batch = stack.enter_context(patch("batch_baselines.run_batch_baselines"))
+                    stack.enter_context(patch("pipeline.export", return_value=[]))
+
+                    self.assertEqual(main(), 0)
+
+                    self.assertEqual([call.args[0] for call in prepare.call_args_list], ["prepare-data"])
+                    if main_selected:
+                        run_main.assert_called_once_with(None)
+                    else:
+                        run_main.assert_not_called()
+                    studies.assert_called_once()
+                    self.assertEqual(studies.call_args.args[1], artifacts)
+                    self.assertEqual(batch.call_count, int(batch_selected))
 
     def test_setup_does_not_advance_bar_and_omissions_count_once(self):
         self.enable_progress({"benchmark"})

@@ -112,9 +112,6 @@ run_radixgraph --stages figure12 --skip-prepare
 
 # 7. Run Figure 13.
 run_radixgraph --stages figure13 --skip-prepare
-
-# 8. Run Tables 5–7, including batch-update baselines.
-run_radixgraph --stages tables,batch --skip-prepare
 ```
 
 Multiple stages can be selected with commas.
@@ -143,7 +140,6 @@ Allow **several days for the first full run** on a 64-thread Xeon server meeting
 | 5. `figure11`: Figure 11 | About 2 hours |
 | 6. `figure12`: Figure 12, all panels | A few minutes |
 | 7. `figure13`: Figure 13 | A few minutes |
-| 8. `tables,batch`: Tables 5–7 and batch-update baselines | About 24 hours |
 | `report`: regenerate plots and tables from an existing run | A few minutes |
 
 ### Bypass requirement checks

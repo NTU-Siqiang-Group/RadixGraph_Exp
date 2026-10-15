@@ -124,7 +124,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
 
     def test_arm_coverage_distinguishes_available_grid_from_full_paper_grid(self):
         with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
-            p = Pipeline(parser().parse_args(self.arguments()))
+            p = Pipeline(parser().parse_args(self.arguments("--stages", "all,tables,batch")))
         # Export coverage after successful renderers have produced the complete
         # smoke artifact set. Only the unavailable Spruce measurements are absent.
         expected = ["figures/figure8.pdf", "figures/figure9.pdf", "figures/figure10.pdf",
@@ -153,6 +153,39 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         readme = (p.output / "README.md").read_text()
         self.assertIn("Architecture: **arm64**", readme)
         self.assertIn("bvgt: Spruce/bvgt requires x86-64", readme)
+
+    def test_default_and_all_coverage_requires_only_selected_figures(self):
+        sources = dict(architecture="amd64", available_systems=list(SYSTEMS))
+        for profile in ("smoke", "paper"):
+            for explicit_all in (False, True):
+                with self.subTest(profile=profile, explicit_all=explicit_all):
+                    arguments = ["--profile", profile, "--run-dir",
+                                 str(self.root / f"{profile}-{explicit_all}")]
+                    if explicit_all:
+                        arguments += ["--stages", "all"]
+                    with patch("pipeline.load_source_versions", return_value=sources):
+                        p = Pipeline(parser().parse_args(arguments))
+                    expected = ["figures/figure8.pdf", "figures/figure9.pdf", "figures/figure10.pdf",
+                                "figures/figure12_a.pdf", "figures/figure12_b.pdf", "figures/figure13.pdf",
+                                "tables/figure12_transformations.csv"]
+                    if profile == "paper":
+                        expected += ["figures/figure11.pdf", "figures/figure12_c.pdf"]
+                    for name in expected:
+                        path = p.output / name
+                        path.parent.mkdir(exist_ok=True)
+                        path.touch()
+                    with patch("gfe_reports.render_gfe_reports", return_value={}):
+                        with patch("study_reports.render_study_reports", return_value={}):
+                            with patch("batch_baselines.render_batch_reports", return_value={}):
+                                with patch("table_figures.render_table_figures", return_value=dict(figures=[], tables=[], issues=[])):
+                                    with patch("upstream_plots.render_original_plots", return_value=dict(plots=[], issues=[])):
+                                        self.assertEqual(export(p), [])
+                    coverage = json.loads((p.output / "coverage.json").read_text())
+                    self.assertCountEqual(coverage["expected_artifacts"], expected)
+                    self.assertEqual(coverage["missing_artifacts"], [])
+                    self.assertFalse(coverage["full_available_scope"])
+                    self.assertFalse(coverage["full_experiment_scope"])
+                    self.assertEqual(p.manifest["status"], "finished")
 
 
 if __name__ == "__main__":

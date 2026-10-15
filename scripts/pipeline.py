@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 HERE = Path(__file__).resolve().parent
 DATASETS = ("com-lj.ungraph", "dota-league", "com-orkut.ungraph", "graph500-24", "uniform-24", "twitter-2010")
 FIGURE_STAGES = tuple(f"figure{n}" for n in range(8, 14))
+DEFAULT_STAGES = frozenset({"prepare", "main", "figure12", "figure13"})
 EXPERIMENT_STAGES = {"main", "studies", "batch", "tables", *FIGURE_STAGES}
 SYSTEMS = {"radixgraph": "radixgraph", "bvgt": "bvgt", "teseo": "teseo.13", "sortledton": "sortledton.4", "gtx": "gtx"}
 
@@ -74,6 +75,14 @@ def split_names(value, allowed):
     if unknown:
         raise argparse.ArgumentTypeError("Unknown selection: " + ", ".join(sorted(unknown)))
     return list(dict.fromkeys(names))
+
+
+def expand_stages(names):
+    stages = set(names)
+    if "all" in stages:
+        stages.remove("all")
+        stages.update(DEFAULT_STAGES)
+    return stages
 
 
 class Pipeline:
@@ -134,6 +143,7 @@ class Pipeline:
         from studies import planned_study_jobs
         from batch_baselines import planned_batch_jobs
 
+        stages = expand_stages(stages)
         names = {"report"}
         if not self.args.skip_prepare and stages & ({"prepare"} | EXPERIMENT_STAGES):
             names.add("prepare-data")
@@ -364,7 +374,7 @@ def parser():
     result.add_argument("--profile", choices=("paper", "smoke"), default=os.getenv("PROFILE", "paper"),
                         help="smoke uses tiny synthetic fixtures and cannot reproduce paper measurements")
     result.add_argument("--stages", type=lambda v: split_names(v, ("all", "prepare", "main", "studies", "batch", "tables", "report", *FIGURE_STAGES)), default=["all"],
-                        help="comma-separated stages; reports are always exported, including on failures")
+                        help="comma-separated stages; all runs preparation and Figures 8–13; tables and batch are opt-in; reports are always exported, including on failures")
     result.add_argument("--gfe-dir", type=Path, default=Path(os.getenv("GFE_DIR", "/workspace/gfe_driver")))
     result.add_argument("--radix-dir", type=Path, default=Path(os.getenv("RADIX_DIR", "/workspace/RadixGraph")))
     result.add_argument("--data-dir", type=Path, default=Path(os.getenv("DATA_DIR", "/data")), help="reusable dataset cache")
@@ -420,9 +430,7 @@ def export(p):
             p.note("report-original-plots", "failed", reason)
     p.manifest["plotting"] = "plotting/manifest.json"
     config = p.manifest["config"]
-    stages = set(config["stages"])
-    if "all" in stages:
-        stages = {"prepare", "main", "studies", "batch"}
+    stages = expand_stages(config["stages"])
     expected = []
     if "main" in stages or stages & set(FIGURE_STAGES[:4]):
         expected += [f"figures/{figure}.pdf" for figure in ("figure8", "figure10")
@@ -515,7 +523,7 @@ def main():
         p.manifest["requirements"] = resources
     p.save()
     print("Output directory: " + str(p.output), flush=True)
-    stages = {"prepare", "main", "studies", "batch"} if "all" in args.stages else set(args.stages)
+    stages = expand_stages(args.stages)
     p.start_progress(stages)
     exit_code = 0
     try:
