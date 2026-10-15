@@ -68,6 +68,9 @@ checkout https://github.com/cwida/teseo.git "$GFE_DIR/teseo" "$TESEO_REV"
 checkout https://gitlab.db.in.tum.de/per.fuchs/sortledton.git "$GFE_DIR/sortledton" "$SORTLEDTON_REV"
 checkout https://github.com/Jiboxiake/GTX-SIGMOD2025.git "$GFE_DIR/GTX-SIGMOD2025" "$GTX_REV"
 git -C "$GFE_DIR/GTX-SIGMOD2025" submodule update --init --recursive
+# Physical package IDs can be sparse or unknown on any architecture. Patch all
+# topology copies before graphlog, Teseo, or the GFE driver is compiled.
+python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-cpu-topology.py" "$GFE_DIR"
 if [[ $TARGETARCH == arm64 ]]; then
     python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-arm64.py" gfe "$GFE_DIR"
     # Standalone RadixGraph copies this file into each variant build tree.

@@ -32,6 +32,7 @@ else:
 manifest['teseo_numa'] = False if manifest['architecture'] == 'amd64' else None
 manifest['compiler'] = subprocess.check_output([os.environ['CXX'], '--version'], text=True).splitlines()[0]
 manifest['patches'] = ['GAPBS queue/CAS atomics restored in standalone and GFE RadixGraph', 'graphlog full/single-element rightmost subtree bounds', 'GFE aging worker-zero partition restored and final operation counts logged', 'runtime standalone thread count', 'kernel-independent VmRSS field parsing', 'batch max-id bit length',
+                       'CPU topology uses actual package IDs and interleaves uneven packages',
                        'transformation bounds guard and size arguments', 'slightly skewed workload distribution',
                        'GFE aging zero timeout is unlimited', 'GTX LCC honors the configured timeout',
                        'GFE deletion skips undefined final-edge-normalized milestones for empty final graphs',

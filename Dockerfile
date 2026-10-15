@@ -39,6 +39,7 @@ WORKDIR /workspace
 # Cache fetches and independent compiler stages separately. Dataset downloads
 # occur only when the runtime preparation stage is requested.
 COPY scripts/build/architecture.sh /opt/radixgraph-exp/scripts/build/architecture.sh
+COPY scripts/build/patch-cpu-topology.py /opt/radixgraph-exp/scripts/build/patch-cpu-topology.py
 COPY scripts/build/patch-arm64.py /opt/radixgraph-exp/scripts/build/patch-arm64.py
 COPY scripts/build/patch-arm64-ordering.py /opt/radixgraph-exp/scripts/build/patch-arm64-ordering.py
 COPY scripts/build/fetch.sh /opt/radixgraph-exp/scripts/build/fetch.sh
