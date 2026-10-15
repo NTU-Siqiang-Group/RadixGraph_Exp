@@ -10,7 +10,7 @@ RUN apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update && \
     libnuma-dev numactl libevent-dev libboost-dev libboost-container-dev \
     libboost-stacktrace-dev libboost-program-options-dev libboost-filesystem-dev \
     libboost-system-dev zlib1g-dev libsqlite3-dev \
-    libpapi-dev libjemalloc-dev libtbb-dev libssl-dev \
+    libpapi-dev libjemalloc-dev libtbb-dev libssl-dev libsimde-dev \
     python3 python3-dev python3-tqdm python3-matplotlib python3-numpy python3-pandas \
     wget curl ca-certificates file time && \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 && \
@@ -39,6 +39,8 @@ WORKDIR /workspace
 # Cache fetches and independent compiler stages separately. Dataset downloads
 # occur only when the runtime preparation stage is requested.
 COPY scripts/build/architecture.sh /opt/radixgraph-exp/scripts/build/architecture.sh
+COPY scripts/build/patch-arm64.py /opt/radixgraph-exp/scripts/build/patch-arm64.py
+COPY scripts/build/patch-arm64-ordering.py /opt/radixgraph-exp/scripts/build/patch-arm64-ordering.py
 COPY scripts/build/fetch.sh /opt/radixgraph-exp/scripts/build/fetch.sh
 RUN BUILD_JOBS=${BUILD_JOBS} GFE_REV=${GFE_REV} RADIX_REV=${RADIX_REV} \
     GRAPHLOG_REV=${GRAPHLOG_REV} UNODB_REV=${UNODB_REV} \
