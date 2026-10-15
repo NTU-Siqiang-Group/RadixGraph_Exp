@@ -38,6 +38,7 @@ WORKDIR /workspace
 
 # Cache fetches and independent compiler stages separately. Dataset downloads
 # occur only when the runtime preparation stage is requested.
+COPY scripts/build/architecture.sh /opt/radixgraph-exp/scripts/build/architecture.sh
 COPY scripts/build/fetch.sh /opt/radixgraph-exp/scripts/build/fetch.sh
 RUN BUILD_JOBS=${BUILD_JOBS} GFE_REV=${GFE_REV} RADIX_REV=${RADIX_REV} \
     GRAPHLOG_REV=${GRAPHLOG_REV} UNODB_REV=${UNODB_REV} \
