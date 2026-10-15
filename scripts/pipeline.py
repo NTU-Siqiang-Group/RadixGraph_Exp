@@ -373,8 +373,12 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     result.add_argument("--profile", choices=("paper", "smoke"), default=os.getenv("PROFILE", "paper"),
                         help="smoke uses tiny synthetic fixtures and cannot reproduce paper measurements")
-    result.add_argument("--stages", type=lambda v: split_names(v, ("all", "prepare", "main", "studies", "batch", "tables", "report", *FIGURE_STAGES)), default=["all"],
-                        help="comma-separated stages; all runs preparation and Figures 8–13; tables and batch are opt-in; reports are always exported, including on failures")
+    stage_selection = result.add_mutually_exclusive_group()
+    stage_selection.add_argument("--stages", type=lambda v: split_names(v, ("all", "prepare", "main", "studies", "batch", "tables", "report", *FIGURE_STAGES)), default=["all"],
+                                 help="comma-separated stages; all runs preparation and Figures 8–13; tables and batch are opt-in; report regenerates figure reports only")
+    stage_selection.add_argument("--report", dest="stages", action="store_const", const=["report"],
+                                 default=argparse.SUPPRESS,
+                                 help="regenerate figure reports from an existing run; alias for --stages report")
     result.add_argument("--gfe-dir", type=Path, default=Path(os.getenv("GFE_DIR", "/workspace/gfe_driver")))
     result.add_argument("--radix-dir", type=Path, default=Path(os.getenv("RADIX_DIR", "/workspace/RadixGraph")))
     result.add_argument("--data-dir", type=Path, default=Path(os.getenv("DATA_DIR", "/data")), help="reusable dataset cache")
@@ -400,9 +404,22 @@ def export(p):
     from gfe_reports import render_gfe_reports
     from study_reports import render_study_reports
     from batch_baselines import render_batch_reports
-    for name, render in (("gfe", lambda: render_gfe_reports(p.output, p.jobs, p.profile)),
-                         ("batch", lambda: render_batch_reports(p.output)),
-                         ("studies", lambda: render_study_reports(p.output))):
+    config = p.manifest["config"]
+    stages = expand_stages(config["stages"])
+    if p.args.stages == ["report"]:
+        stages -= {"tables", "batch"}
+        if "studies" in stages:
+            stages.remove("studies")
+            stages.update({"figure12", "figure13"})
+    artifacts = study_artifacts(stages)
+    if "batch" in stages:
+        artifacts.add("table7")
+    renderers = [("gfe", lambda: render_gfe_reports(p.output, p.jobs, p.profile))]
+    if "batch" in stages:
+        renderers.append(("batch", lambda: render_batch_reports(p.output)))
+    if artifacts:
+        renderers.append(("studies", lambda: render_study_reports(p.output, artifacts=artifacts)))
+    for name, render in renderers:
         try:
             report = render()
             for issue in (report or {}).get("issues", []) if isinstance(report, dict) else []:
@@ -412,15 +429,18 @@ def export(p):
         except Exception as error:
             p.note("report-" + name, "failed", str(error))
     from table_figures import render_table_figures
-    try:
-        table_figures = render_table_figures(p.output)
-        for issue in table_figures["issues"]:
-            reason = str(issue)
-            if not any(j.get("reason") == reason for j in p.jobs):
-                p.note("report-table-figures", "failed", reason)
-    except Exception as error:
-        table_figures = dict(figures=[], tables=[], issues=[str(error)])
-        p.note("report-table-figures", "failed", str(error))
+    table_numbers = tuple(n for n in (5, 6, 7) if f"table{n}" in artifacts)
+    table_figures = dict(figures=[], tables=[], issues=[])
+    if table_numbers:
+        try:
+            table_figures = render_table_figures(p.output, numbers=table_numbers)
+            for issue in table_figures["issues"]:
+                reason = str(issue)
+                if not any(j.get("reason") == reason for j in p.jobs):
+                    p.note("report-table-figures", "failed", reason)
+        except Exception as error:
+            table_figures = dict(figures=[], tables=[], issues=[str(error)])
+            p.note("report-table-figures", "failed", str(error))
     p.manifest["table_figures"] = table_figures
     from upstream_plots import render_original_plots
     plotting = render_original_plots(p.output, p.jobs, p.gfe, p.radix, p.profile)
@@ -429,8 +449,6 @@ def export(p):
         if not any(j.get("reason") == reason for j in p.jobs):
             p.note("report-original-plots", "failed", reason)
     p.manifest["plotting"] = "plotting/manifest.json"
-    config = p.manifest["config"]
-    stages = expand_stages(config["stages"])
     expected = []
     if "main" in stages or stages & set(FIGURE_STAGES[:4]):
         expected += [f"figures/{figure}.pdf" for figure in ("figure8", "figure10")
@@ -469,7 +487,7 @@ def export(p):
                                                 capabilities=p.capabilities, selected_systems=config["systems"], profile=p.profile,
                                                 expected_artifacts=expected, missing_artifacts=missing,
                                                 renderer="original upstream scripts",
-                                                table_renderer="paper-style measured tables",
+                                                table_renderer="paper-style measured tables" if table_numbers else "skipped",
                                                 plot_limitations=[r for r in plotting["plots"] if r["status"] == "skipped"],
                                                 table_only_panels=["Figure 12(d): no original renderer is provided; see tables/figure12_transformations.csv"]))
     failures = [j for j in p.jobs if j["status"] not in ("ok", "expected_omission")]
@@ -481,7 +499,7 @@ def export(p):
     (p.output / "artifacts.json").write_text(json.dumps(artifacts, indent=2) + "\n")
     lines = ["# RadixGraph reproduction run", "", f"Profile: **{p.profile}**. Status: **{p.manifest['status']}**.", "",
              "Coverage: **" + ("full experiment grid" if full_scope else "selected experiment subset") + "**; see [coverage.json](coverage.json).", "",
-             "CSV tables retain this run's full-precision measurements. Table PDFs in figures/ follow the paper's layout and contain only the table grid, headers and values.",
+             "CSV files retain this run's full-precision measurements.",
              "Experimental plots retain the original upstream drawing code. Figure 9 mixed-update progress uses measured operation counts, completion times and the recorded workload fraction (GTX's 20% prefix for new runs; legacy records default to full workloads).",
              "See [plotting/manifest.json](plotting/manifest.json) for script hashes, inputs, execution logs, and retained upstream assumptions.",
              "The smoke profile verifies wiring with synthetic data; it is not a paper result.", ""]

@@ -251,7 +251,7 @@ def run_studies(p, artifacts=None):
                                 f"Dataset edge file is missing: {edge}")
     finally:
         save()
-        report = render_study_reports(Path(p.output), records)
+        report = render_study_reports(Path(p.output), records, artifacts=artifacts)
         for issue in report["issues"]:
             if issue.get("status") == "parse_error":
                 p.note(f"studies-parse-{issue.get('artifact')}", "failed",

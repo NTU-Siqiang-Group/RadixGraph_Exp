@@ -259,12 +259,12 @@ def _render_pages(figures, name, models):
             page.clear()
 
 
-def render_table_figures(output_run_dir):
-    """Render CSV measurements and remove known obsolete Markdown exports."""
+def render_table_figures(output_run_dir, numbers=(5, 6, 7)):
+    """Render selected CSV tables and remove only their obsolete exports."""
     output = Path(output_run_dir)
     figures = output / "figures"
     report = {"figures": [], "tables": [], "issues": []}
-    for number in (5, 6, 7):
+    for number in numbers:
         name = f"table{number}"
         record = {"artifact": name, "status": "skipped",
                   "source": f"tables/{name}.csv", "figures": []}

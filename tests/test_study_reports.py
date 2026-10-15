@@ -191,6 +191,71 @@ Batch size: 10, average insert throughput: 1e6 ops/s, average delete throughput:
             self.assertEqual(row["art_sort_insert_ratio"], "")
             self.assertEqual(row["status"], "incomplete")
 
+    def test_figure_reports_skip_table_evidence_and_preserve_saved_tables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tables, logs, work = root / "tables", root / "logs", root / "studies" / "work"
+            tables.mkdir()
+            logs.mkdir()
+            work.mkdir(parents=True)
+            saved = {}
+            for name in ("table5.csv", "table6.csv", "table7.csv", "table5.md", "table6.md", "table7.md"):
+                path = tables / name
+                path.write_text("Previously generated table\n")
+                saved[path] = path.read_bytes()
+            baseline = tables / "table7_baselines.csv"
+            baseline.write_bytes(b"\xff invalid baseline CSV")
+            saved[baseline] = baseline.read_bytes()
+            transform = logs / "transform.log"
+            transform.write_text("n = 1000, a = 19 4 3 3 3\nn = 3100, a = 20 3 3 3 3\nTransformation takes 0.1 s\n")
+            (work / "memory_log.txt").write_text("1000 100000\n3100 310000\n")
+            workload = logs / "workload.log"
+            workload.write_text("\n".join(f"{method}: memory after {n} insertions is {n * 100} bytes"
+                                          for method in ("SORT", "vEB") for n in range(1000, 10001, 1000)))
+            records = [
+                {"status": "ok", "log": str(transform), "workdir": str(work),
+                 "metadata": {"artifact": "figure12", "kind": "transformation"}},
+                {"status": "ok", "log": str(workload),
+                 "metadata": {"artifact": "figure13", "workload": "u", "n": 10000}},
+                # Malformed metadata and unreadable evidence must be ignored.
+                *({"status": "failed", "log": str(baseline), "metadata": {"artifact": artifact}}
+                  for artifact in ("table5", "table6", "table7")),
+            ]
+
+            report = render_study_reports(root, records, artifacts={"figure12", "figure13"})
+
+            self.assertEqual(report["issues"], [])
+            self.assertEqual(report["rows"], {"table5": 0, "table6": 0, "table7": 0})
+            self.assertEqual({path: path.read_bytes() for path in saved}, saved)
+            self.assertFalse((tables / "table6_updates.csv").exists())
+            self.assertFalse((tables / "table6_analytics.csv").exists())
+            self.assertFalse((tables / "table7_radixgraph.csv").exists())
+            with (tables / "figure12_transformations.csv").open() as handle:
+                self.assertEqual(next(csv.DictReader(handle))["seconds"], "0.1")
+            with (tables / "figure13_workloads.csv").open() as handle:
+                self.assertEqual(len(list(csv.DictReader(handle))), 20)
+
+    def test_selected_runner_exports_only_requested_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pipeline = SimpleNamespace(output=root, radix=root / "RadixGraph",
+                                       profile="smoke", threads=2, dataset_specs=[], jobs=[])
+
+            def run(name, command, cwd, input_text=None, metadata=None):
+                log = cwd / "stdout.log"
+                log.write_text("\n".join(f"{method}: memory after {n} insertions is {n * 100} bytes"
+                                          for method in ("SORT", "vEB") for n in range(1000, 10001, 1000)))
+                return {"name": name, "status": "ok", "log": str(log)}
+
+            pipeline.run = run
+            pipeline.note = lambda *args: self.fail(f"Unexpected study failure: {args}")
+
+            records = run_studies(pipeline, {"figure13"})
+
+            self.assertEqual(len(records), 3)
+            self.assertEqual({path.name for path in (root / "tables").iterdir()},
+                             {"figure13_workloads.csv"})
+
     def test_figure_measurements_export_without_a_replacement_renderer(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

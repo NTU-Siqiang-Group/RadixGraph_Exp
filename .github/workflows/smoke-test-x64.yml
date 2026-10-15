@@ -91,7 +91,6 @@ jobs:
           EXPECTED_ARCH: amd64
         run: |
           python3 - <<'PY'
-          import csv
           import json
           import os
           from pathlib import Path
@@ -129,10 +128,8 @@ jobs:
               assert f"figures/table{number}.pdf" not in artifacts, number
               assert f"figures/table{number}.pdf" not in coverage["expected_artifacts"], number
               assert f"tables/table{number}.csv" not in coverage["expected_artifacts"], number
-          # Reporting may retain CSV headers for unselected table stages.
-          for path in (run / "tables").glob("table*.csv"):
-              with path.open(newline="") as stream:
-                  assert not list(csv.DictReader(stream)), path
+          assert not list((run / "tables").glob("table*.csv")), "Unexpected table reports"
+          assert not (run / "batch").exists(), "Unexpected batch reports"
           for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
               assert not (run / "tables" / f"{name}.md").exists(), name
           assert not list((run / "figures").glob("table*.png")), "Unexpected table PNGs"

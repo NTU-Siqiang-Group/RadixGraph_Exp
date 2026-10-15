@@ -138,9 +138,15 @@ def _ratio(numerator, denominator):
     return numerator / denominator
 
 
-def render_study_reports(output, records=None):
-    """Regenerate CSV artifacts from saved logs only."""
+def render_study_reports(output, records=None, artifacts=None):
+    """Regenerate selected CSV artifacts from saved logs only.
+
+    Omitting ``artifacts`` preserves the standalone export of all studies.
+    Unselected measurements and their existing reports are left untouched.
+    """
     output = Path(output).resolve()
+    artifacts = ({"figure12", "figure13", "table5", "table6", "table7"}
+                 if artifacts is None else set(artifacts))
     if records is None:
         index = output / "studies" / "records.json"
         records = json.loads(index.read_text()) if index.is_file() else []
@@ -153,6 +159,8 @@ def render_study_reports(output, records=None):
     for record in records:
         meta = record.get("metadata", {})
         artifact, kind = meta.get("artifact"), meta.get("kind")
+        if artifact not in artifacts:
+            continue
         text = _read(output, record.get("log", ""))
         source = _source(output, record.get("log", ""))
         common = {"source_log": source}
@@ -218,11 +226,13 @@ def render_study_reports(output, records=None):
                            "detail": record.get("name", "")})
 
     fields5 = ["n", "bits", "method", "insert_ops_s", "query_ops_s", "memory_kib", "status", "source_log"]
-    _write_csv(tables / "table5.csv", table5, fields5)
+    if "table5" in artifacts:
+        _write_csv(tables / "table5.csv", table5, fields5)
     fields_updates = ["dataset", "variant", "insert_seconds", "delete_seconds", "memory_kib", "status", "source_log"]
     fields_analytics = ["dataset", "variant", "two_hop_seconds", "bfs_seconds", "sssp_seconds", "bc_seconds", "status", "source_log"]
-    _write_csv(tables / "table6_updates.csv", update_rows, fields_updates)
-    _write_csv(tables / "table6_analytics.csv", analytics_rows, fields_analytics)
+    if "table6" in artifacts:
+        _write_csv(tables / "table6_updates.csv", update_rows, fields_updates)
+        _write_csv(tables / "table6_analytics.csv", analytics_rows, fields_analytics)
     datasets = list(dict.fromkeys(row["dataset"] for row in update_rows + analytics_rows))
     table6 = []
     ratio_fields = ["art_sort_insert_ratio", "art_sort_delete_ratio", "art_sort_memory_ratio",
@@ -246,22 +256,29 @@ def render_study_reports(output, records=None):
         row["source_logs"] = " ; ".join(item["source_log"] for item in list(up.values()) + list(an.values()))
         table6.append(row)
     fields6 = ["dataset", *ratio_fields, "status", "source_logs"]
-    _write_csv(tables / "table6.csv", table6, fields6)
+    if "table6" in artifacts:
+        _write_csv(tables / "table6.csv", table6, fields6)
     fields7 = ["dataset", "method", "batch_size", "insert_ops_s", "delete_ops_s", "memory_gib", "status", "source_log"]
-    _write_csv(tables / "table7_radixgraph.csv", table7, fields7)
-    baseline_file = tables / "table7_baselines.csv"
-    if baseline_file.is_file():
-        with baseline_file.open(newline="") as handle:
-            table7.extend(csv.DictReader(handle))
-    _write_csv(tables / "table7.csv", table7, fields7)
-    fanout_rows = [{**row, "fanout": " ".join(map(str, row["fanout"]))} for row in configurations]
-    _write_csv(tables / "figure12_fanouts.csv", fanout_rows, ["n", "fanout", "source_log"])
-    _write_csv(tables / "figure12_memory_costs.csv", memory_costs, ["n", "variant", "fanout", "memory_bytes", "status", "source_log"])
-    _write_csv(tables / "figure12_memory_footprint.csv", memory_points, ["n", "memory_bytes", "source_log"])
-    _write_csv(tables / "figure12_transformations.csv", transformations, ["n", "seconds", "source_log"])
-    _write_csv(tables / "figure13_workloads.csv", workload_points, ["workload", "method", "n", "fraction", "memory_bytes", "status", "source_log"])
-    for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
-        (tables / f"{name}.md").unlink(missing_ok=True)
+    if "table7" in artifacts:
+        _write_csv(tables / "table7_radixgraph.csv", table7, fields7)
+        baseline_file = tables / "table7_baselines.csv"
+        if baseline_file.is_file():
+            with baseline_file.open(newline="") as handle:
+                table7.extend(csv.DictReader(handle))
+        _write_csv(tables / "table7.csv", table7, fields7)
+    if "figure12" in artifacts:
+        fanout_rows = [{**row, "fanout": " ".join(map(str, row["fanout"]))} for row in configurations]
+        _write_csv(tables / "figure12_fanouts.csv", fanout_rows, ["n", "fanout", "source_log"])
+        _write_csv(tables / "figure12_memory_costs.csv", memory_costs, ["n", "variant", "fanout", "memory_bytes", "status", "source_log"])
+        _write_csv(tables / "figure12_memory_footprint.csv", memory_points, ["n", "memory_bytes", "source_log"])
+        _write_csv(tables / "figure12_transformations.csv", transformations, ["n", "seconds", "source_log"])
+    if "figure13" in artifacts:
+        _write_csv(tables / "figure13_workloads.csv", workload_points, ["workload", "method", "n", "fraction", "memory_bytes", "status", "source_log"])
+    legacy_markdown = {"table5": ("table5",), "table6": ("table6",), "table7": ("table7",),
+                       "figure12": ("figure12_fanouts", "figure12_memory_costs", "figure12_transformations")}
+    for artifact in artifacts:
+        for name in legacy_markdown.get(artifact, ()):
+            (tables / f"{name}.md").unlink(missing_ok=True)
     for label, rows in (("table5", table5), ("table6", table6), ("table7", table7), ("figure12", memory_costs)):
         for row in rows:
             if row.get("status") != "ok":

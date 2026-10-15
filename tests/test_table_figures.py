@@ -115,6 +115,52 @@ class TableFigureTests(unittest.TestCase):
         pdf = (figures / "table5.pdf").read_bytes()
         self.assertEqual(len(re.findall(rb"/Type\s*/Page\b", pdf)), 1)
 
+    def test_selected_table_preserves_unselected_corrupt_sources_and_exports(self):
+        (self.tables / "table5.csv").write_bytes(b"\xffinvalid UTF-8 measurement\n")
+        (self.tables / "table7.csv").write_text("invalid,columns\ninvalid,row\n")
+        self.write(6)
+        figures = self.root / "figures"
+        figures.mkdir()
+        for number in (5, 6, 7):
+            (self.tables / f"table{number}.md").write_text("legacy generated Markdown")
+        for number in (5, 7):
+            for suffix in (".pdf", ".png", "_additional.png"):
+                (figures / f"table{number}{suffix}").write_bytes(b"existing artifact")
+        preserved = {path: path.read_bytes() for path in self.root.rglob("*")
+                     if path.is_file() and path.name != "table6.md"}
+
+        report = render_table_figures(self.root, numbers=(6,))
+
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["figures"], ["figures/table6.pdf"])
+        self.assertEqual([row["artifact"] for row in report["tables"]], ["table6"])
+        self.assertEqual(report["tables"][0]["status"], "ok")
+        self.assertTrue((figures / "table6.pdf").read_bytes().startswith(b"%PDF-"))
+        self.assertFalse((self.tables / "table6.md").exists())
+        self.assertEqual(preserved, {path: path.read_bytes() for path in preserved})
+        self.assertEqual({path for path in self.root.rglob("*") if path.is_file()},
+                         set(preserved) | {figures / "table6.pdf"})
+
+    def test_empty_selection_returns_empty_report_without_filesystem_changes(self):
+        (self.tables / "table5.csv").write_bytes(b"\xffinvalid UTF-8 measurement\n")
+        (self.tables / "table5.md").write_text("legacy generated Markdown")
+        figures = self.root / "figures"
+        figures.mkdir()
+        (figures / "table5.pdf").write_bytes(b"existing artifact")
+        originals = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                     for path in self.root.rglob("*") if path.is_file()}
+        empty_report = {"figures": [], "tables": [], "issues": []}
+        missing = self.root / "missing-run"
+
+        with patch("scripts.table_figures.format_paper_tables") as format_tables:
+            self.assertEqual(render_table_figures(self.root, numbers=()), empty_report)
+            self.assertEqual(render_table_figures(missing, numbers=()), empty_report)
+            format_tables.assert_not_called()
+
+        self.assertFalse(missing.exists())
+        self.assertEqual(originals, {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                                     for path in self.root.rglob("*") if path.is_file()})
+
     def test_table7_six_dataset_csv_exports_one_pdf_page_with_only_three_paper_datasets(self):
         path = self.tables / "table7.csv"
         fields = ("dataset", "method", "batch_size", "insert_ops_s", "delete_ops_s", "memory_gib", "status", "source_log")

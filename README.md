@@ -118,10 +118,10 @@ Multiple stages can be selected with commas.
 
 Each invocation creates a new `output/<UTC-run-id>/` and prints its path, and resulting figures are stored in `output/<UTC-run-id>/figures`. Note that Figure 12(d) is exported as `tables/figure12_transformations.csv`.
 
-To regenerate figures and tables from an existing run without rerunning experiments, replace `<UTC-run-id>` with that run's directory name:
+To regenerate figure reports from an existing run without rerunning experiments, replace `<UTC-run-id>` with that run's directory name:
 
 ```sh
-run_radixgraph --stages report --run-dir "/output/<UTC-run-id>"
+run_radixgraph --report --run-dir "/output/<UTC-run-id>"
 ```
 
 Existing run directories can be reused only for `report`; experiment stages always write to a new directory.
@@ -140,7 +140,7 @@ Allow **several days for the first full run** on a 64-thread Xeon server meeting
 | 5. `figure11`: Figure 11 | About 2 hours |
 | 6. `figure12`: Figure 12, all panels | A few minutes |
 | 7. `figure13`: Figure 13 | A few minutes |
-| `report`: regenerate plots and tables from an existing run | A few minutes |
+| `report`: regenerate figure reports from an existing run | A few minutes |
 
 ### Bypass requirement checks
 
