@@ -11,7 +11,13 @@ if [[ $TARGETARCH == arm64 && $name == bvgt ]]; then
     echo 'Skipping x86-only Spruce/bvgt driver on arm64'
     exit 0
 fi
+if [[ $TARGETARCH == arm64 && $name == teseo ]]; then
+    echo 'Skipping Teseo driver on arm64: CPU-affinity topology detection is unsupported'
+    exit 0
+fi
 python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-timeouts.py" "$GFE_DIR"
+python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-delete-reporting.py" "$GFE_DIR"
+python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-concurrent-start.py" "$GFE_DIR"
 build_driver() {
     local name=$1 system=$2 hops=$3 lib=$4
     local build="$GFE_DIR/builds/$name"

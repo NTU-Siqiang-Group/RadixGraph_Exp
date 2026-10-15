@@ -21,6 +21,10 @@ FIGURE_STAGES = tuple(f"figure{n}" for n in range(8, 14))
 DEFAULT_STAGES = frozenset({"prepare", "main", "figure12", "figure13"})
 EXPERIMENT_STAGES = {"main", "studies", "batch", "tables", *FIGURE_STAGES}
 SYSTEMS = {"radixgraph": "radixgraph", "bvgt": "bvgt", "teseo": "teseo.13", "sortledton": "sortledton.4", "gtx": "gtx"}
+ARM64_EXCLUSIONS = {
+    "bvgt": "Spruce/bvgt requires x86-64 and is excluded from ARM64 images",
+    "teseo": "Teseo CPU-affinity topology detection is unsupported on ARM64",
+}
 
 
 def load_source_versions():
@@ -37,15 +41,20 @@ def runtime_capabilities(sources=None):
     architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine.lower(), machine.lower())
     available = sources.get("available_systems")
     if available is None:
-        available = [system for system in SYSTEMS if architecture != "arm64" or system != "bvgt"]
+        available = list(SYSTEMS)
     if not isinstance(available, list) or not available or set(available) - set(SYSTEMS):
         raise ValueError("Image manifest available_systems must list known GFE systems")
     available = list(dict.fromkeys(available))
     exclusions = dict(sources.get("excluded_systems", {}))
+    if architecture == "arm64":
+        # Older ARM64 images may advertise Teseo despite its affinity failure.
+        available = [system for system in available if system not in ARM64_EXCLUSIONS]
+        for system, reason in ARM64_EXCLUSIONS.items():
+            exclusions.setdefault(system, reason)
+    if not available:
+        raise ValueError("Image manifest has no supported GFE systems for " + architecture)
     for system in (name for name in SYSTEMS if name not in available):
-        exclusions.setdefault(system, "Spruce/bvgt requires x86-64 and is excluded from ARM64 images"
-                              if system == "bvgt" and architecture == "arm64"
-                              else "System is not included in this image")
+        exclusions.setdefault(system, "System is not included in this image")
     return dict(architecture=architecture, available_systems=available,
                 excluded_systems=exclusions)
 
@@ -329,6 +338,11 @@ class Pipeline:
             if experiment == "concurrent":
                 command[command.index("-w") + 1] = str(meta["write_threads"])
                 command += ["-r", str(meta["read_threads"]), "--aging_release_memory=true", "--mixed_workload=true"]
+                if self.profile == "smoke":
+                    # Scope startup coordination to this subprocess, including when
+                    # smoke and paper pipelines are invoked in the same process.
+                    command = ["env", "RG_SMOKE_CONCURRENT_START=1", *command]
+                    meta["synchronized_start"] = True
         command += extra or []
         return self.run(name, command, self.gfe_work, metadata=meta)
 

@@ -1,4 +1,4 @@
-"""Native architecture detection and complete exclusion of x86-only builds."""
+"""Native architecture detection and exclusion of unsupported ARM64 builds."""
 import os
 from pathlib import Path
 import subprocess
@@ -46,6 +46,18 @@ class BuildArchitectureTests(unittest.TestCase):
                     result = subprocess.run(["bash", str(BUILD / script), *arguments], env=environment,
                                             text=True, capture_output=True, check=True)
                     self.assertIn("Skipping x86-only Spruce/bvgt", result.stdout)
+                    self.assertFalse(missing_sources.exists())
+
+    def test_arm_skips_teseo_library_and_driver_without_touching_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing_sources = Path(directory) / "missing-sources"
+            environment = dict(os.environ, TARGETARCH="arm64", GFE_DIR=str(missing_sources), BUILD_JOBS="2")
+            for script, arguments in (("teseo.sh", []), ("gfe-driver.sh", ["teseo"])):
+                with self.subTest(script=script):
+                    result = subprocess.run(["bash", str(BUILD / script), *arguments], env=environment,
+                                            text=True, capture_output=True, check=True)
+                    self.assertIn("Skipping Teseo", result.stdout)
+                    self.assertIn("CPU-affinity topology detection is unsupported", result.stdout)
                     self.assertFalse(missing_sources.exists())
 
 

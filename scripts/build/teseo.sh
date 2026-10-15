@@ -6,6 +6,10 @@ BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
 [[ $BUILD_JOBS =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be a positive integer' >&2; exit 2; }
+if [[ $TARGETARCH == arm64 ]]; then
+    echo 'Skipping Teseo on arm64: CPU-affinity topology detection is unsupported'
+    exit 0
+fi
 # Headers may expose host NUMA APIs even when Teseo is configured without NUMA.
 # In that mode its auxiliary view array has one element, so thread contexts
 # must consistently select node zero on hosts with multiple NUMA nodes.

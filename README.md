@@ -16,7 +16,7 @@ GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_drive
 
 **macOS:** The intended setup is [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/), which runs the Linux containers inside a Linux VM. With a local Docker Desktop builder, Apple Silicon (M-series) Macs use the ARM64 path by default, and Intel Macs use the x86-64 path.
 
-**ARM64 excludes the Spruce (`bvgt`) baseline.** Its released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0) targets x86-64. ARM64 builds skip downloading and linking this archive, and experiments automatically select the remaining systems.
+**ARM64 runs RadixGraph, Sortledton, and GTX; Spruce (`bvgt`) and Teseo are excluded.** Spruce's released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0) targets x86-64, so ARM64 builds skip downloading and linking it. Teseo's CPU-affinity topology detection assumes x86-style `/proc/cpuinfo` fields and fails on ARM64; its library and driver builds are skipped. Experiments automatically select the three supported systems, and explicitly selecting an excluded system reports an error. The x86-64 image retains all five systems.
 
 ### Hardware for full experiments
 
@@ -33,8 +33,6 @@ On macOS, Docker Desktop's Linux VM must have sufficient CPU and RAM allocated, 
 [![smoke-test-x64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-x64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-x64.yml)
 [![smoke-test-arm64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-arm64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-arm64.yml)
 
-Both LiveJournal workflows build the main Dockerfile and run the same targeted experiments on the real LiveJournal dataset. The x64 workflow tests all five systems, including Spruce; the ARM64 workflow tests the four available systems.
-
 Run the following commands from the repository root.
 
 Build the image:
@@ -49,7 +47,7 @@ mkdir -p data output
 
 ### Run full experiments
 
-Run the paper profile and generate the figures and tables for the image's available systems. On ARM64, Spruce is excluded:
+Run the paper profile and generate the figures and tables for the image's available systems. On ARM64, Spruce and Teseo are excluded:
 ```sh
 docker_user="$(id -u):$(id -g)"
 if docker info --format '{{json .SecurityOptions}}' | grep -q rootless; then
@@ -152,7 +150,7 @@ run_radixgraph --stages all --force
 
 For the full `docker run` command, append `--force` after `--stages all`.
 
-We recommend meeting the requirements; forced runs may fail or produce incomplete results. `--force` only bypasses resource checks; ARM64 builds always exclude Spruce.
+We recommend meeting the requirements; forced runs may fail or produce incomplete results. `--force` only bypasses resource checks; ARM64 builds always exclude Spruce and Teseo.
 
 ### Acknowledgement
 

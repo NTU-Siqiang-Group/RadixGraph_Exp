@@ -394,10 +394,31 @@ class RunnerTests(unittest.TestCase):
             self.p.gfe_job("gtx", spec, "concurrent", variant="2hop-read-4",
                            metadata={"hop": 2, "read_threads": 4, "write_threads": 32})
         command = run.call_args.args[1]
-        self.assertTrue(str(command[0]).endswith("gfe_driver_gtx_2hop"))
+        self.assertEqual(command[:2], ["env", "RG_SMOKE_CONCURRENT_START=1"])
+        self.assertTrue(str(command[2]).endswith("gfe_driver_gtx_2hop"))
+        self.assertTrue(run.call_args.kwargs["metadata"]["synchronized_start"])
         for flag in ("--aging_memfp", "--aging_memfp_physical", "--aging_release_memory", "--mixed_workload"):
             self.assertIn(flag + "=true", command)
         self.assertEqual(command[command.index("-w") + 1], "32")
+
+    def test_smoke_reader_startup_environment_does_not_leak_to_paper_or_other_jobs(self):
+        spec = next(s for s in self.p.dataset_specs if s["name"] == "dota-league")
+        binary = self.p.gfe / "build" / "gfe_driver_gtx"
+        binary.parent.mkdir()
+        binary.write_text(f"#!{sys.executable}\nimport os\nprint(os.getenv('RG_SMOKE_CONCURRENT_START', 'unset'))\n")
+        binary.chmod(0o755)
+        with patch.dict(os.environ):
+            os.environ.pop("RG_SMOKE_CONCURRENT_START", None)
+            for profile, experiment, expected in (("smoke", "concurrent", "1"),
+                                                   ("paper", "concurrent", "unset"),
+                                                   ("smoke", "mixed", "unset")):
+                with self.subTest(profile=profile, experiment=experiment):
+                    self.p.profile = profile
+                    result = self.p.gfe_job("gtx", spec, experiment,
+                                            metadata={"read_threads": 2, "write_threads": 1})
+                    self.assertEqual(result["status"], "ok")
+                    self.assertEqual(Path(result["log"]).read_text().strip(), expected)
+                    self.assertNotIn("RG_SMOKE_CONCURRENT_START", os.environ)
 
     def test_delete_false_flag_uses_cxxopts_equals_syntax(self):
         spec = next(s for s in self.p.dataset_specs if s["name"] == "graph500-24")

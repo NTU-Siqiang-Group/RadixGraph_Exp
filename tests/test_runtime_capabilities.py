@@ -1,4 +1,4 @@
-"""Image capability selection and ARM runs without the x86-only Spruce archive."""
+"""Image capability selection and ARM runs without Spruce or Teseo."""
 from contextlib import redirect_stderr
 import csv
 import io
@@ -10,14 +10,15 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from pipeline import DATASETS, SYSTEMS, Pipeline, export, main, parser
+from pipeline import DATASETS, SYSTEMS, Pipeline, export, main, parser, runtime_capabilities
 from gfe_reports import render_gfe_reports
 from upstream_plots import render_original_plots
 
 
 ARM_SOURCES = dict(architecture="arm64",
-                   available_systems=[name for name in SYSTEMS if name != "bvgt"],
-                   excluded_systems={"bvgt": "Spruce/bvgt requires x86-64"})
+                   available_systems=[name for name in SYSTEMS if name not in ("bvgt", "teseo")],
+                   excluded_systems={"bvgt": "Spruce/bvgt requires x86-64",
+                                     "teseo": "Teseo CPU-affinity topology detection is unsupported on ARM64"})
 
 
 class RuntimeCapabilitiesTests(unittest.TestCase):
@@ -29,7 +30,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
     def arguments(self, *extra):
         return ["--profile", "smoke", "--run-dir", str(self.root / "run"), *extra]
 
-    def test_source_runs_keep_x86_defaults_and_exclude_spruce_on_arm(self):
+    def test_source_runs_keep_x86_defaults_and_exclude_spruce_and_teseo_on_arm(self):
         with patch("pipeline.load_source_versions", return_value={}):
             for machine in ("x86_64", "amd64", "aarch64", "arm64"):
                 with self.subTest(machine=machine), patch("pipeline.platform.machine", return_value=machine):
@@ -53,27 +54,47 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
                 self.assertEqual(p.manifest["sources"], sources)
                 p.manifest_path.unlink()
 
-    def test_explicit_spruce_selection_fails_before_starting_work(self):
-        arguments = ["run.sh", *self.arguments("--systems", "radixgraph,bvgt")]
-        with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
-            with patch.object(sys, "argv", arguments), patch("preflight.check_requirements") as requirements:
-                with redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as failure:
-                    main()
-        self.assertEqual(failure.exception.code, 2)
-        self.assertIn("bvgt: Spruce/bvgt requires x86-64", errors.getvalue())
-        requirements.assert_not_called()
-        self.assertFalse((self.root / "run").exists())
+    def test_explicit_excluded_selection_fails_before_starting_work(self):
+        for system, reason in ARM_SOURCES["excluded_systems"].items():
+            arguments = ["run.sh", *self.arguments("--systems", "radixgraph," + system)]
+            with self.subTest(system=system), patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
+                with patch.object(sys, "argv", arguments), patch("preflight.check_requirements") as requirements:
+                    with redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as failure:
+                        main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertIn(system + ": " + reason, errors.getvalue())
+            requirements.assert_not_called()
+            self.assertFalse((self.root / "run").exists())
+
+    def test_old_arm_image_cannot_reenable_teseo(self):
+        legacy = dict(architecture="arm64",
+                      available_systems=[name for name in SYSTEMS if name != "bvgt"],
+                      excluded_systems={"bvgt": ARM_SOURCES["excluded_systems"]["bvgt"]})
+        with patch("pipeline.load_source_versions", return_value=legacy):
+            args = parser().parse_args(self.arguments())
+            p = Pipeline(args)
+            with redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
+                parser().parse_args(self.arguments("--systems", "teseo"))
+        self.assertEqual(args.systems, ARM_SOURCES["available_systems"])
+        self.assertIn("teseo: Teseo CPU-affinity", errors.getvalue())
+        self.assertEqual(p.capabilities["excluded_systems"], ARM_SOURCES["excluded_systems"])
+        self.assertEqual(legacy["available_systems"], [name for name in SYSTEMS if name != "bvgt"])
+
+    def test_arm_image_must_have_a_supported_system(self):
+        with self.assertRaisesRegex(ValueError, "no supported GFE systems for arm64"):
+            runtime_capabilities(dict(architecture="arm64", available_systems=["bvgt", "teseo"]))
 
     def test_arm_plan_and_manifest_include_only_selected_available_systems(self):
         with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
             p = Pipeline(parser().parse_args(self.arguments("--skip-prepare")))
         self.assertEqual(set(system for system, *_ in p.main_jobs()), set(ARM_SOURCES["available_systems"]))
-        self.assertFalse(any("bvgt" in name for name in p.planned_jobs({"main", "studies", "batch"})))
+        self.assertFalse(any(system in name for system in ("bvgt", "teseo")
+                             for name in p.planned_jobs({"main", "studies", "batch"})))
         stored = json.loads(p.manifest_path.read_text())
         self.assertEqual(stored["config"]["systems"], ARM_SOURCES["available_systems"])
         self.assertEqual(stored["capabilities"]["excluded_systems"], ARM_SOURCES["excluded_systems"])
 
-    def test_arm_reports_leave_spruce_unmeasured_and_keep_other_systems(self):
+    def test_arm_reports_leave_spruce_and_teseo_unmeasured_and_keep_other_systems(self):
         with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
             p = Pipeline(parser().parse_args(self.arguments()))
         log = p.output / "logs" / "fixture.log"
@@ -94,12 +115,13 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
 
         def render_fixture(script, work, input_text=None):
             # The original renderer keeps a fixed five-method layout. Its
-            # adapter must pass an empty Spruce row, retaining every ARM value.
+            # adapter must leave excluded rows empty, retaining every ARM value.
             for filename in ("edge_insertion", "edge_deletion", "memory",
                              "vertex_insertion", "vertex_query", "vertex_memory"):
                 with (work / "csv" / (filename + ".csv")).open() as stream:
                     rows = {row[0]: row[1:-1] for row in list(csv.reader(stream))[1:]}
                 self.assertEqual(rows.pop("Spruce"), ["NaN"] * len(DATASETS))
+                self.assertEqual(rows.pop("Teseo"), ["NaN"] * len(DATASETS))
                 self.assertTrue(all(all(float(value) > 0 for value in row)
                                     for row in rows.values()))
             figures = work / "figures"
@@ -122,11 +144,29 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         self.assertEqual(regenerated.manifest["sources"], ARM_SOURCES)
         self.assertEqual(regenerated.manifest["config"]["systems"], ARM_SOURCES["available_systems"])
 
+    def test_report_regeneration_keeps_historical_arm_teseo_measurements(self):
+        with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
+            original = Pipeline(parser().parse_args(self.arguments()))
+        legacy = dict(architecture="arm64",
+                      available_systems=[name for name in SYSTEMS if name != "bvgt"],
+                      excluded_systems={"bvgt": ARM_SOURCES["excluded_systems"]["bvgt"]})
+        original.manifest["capabilities"] = legacy
+        original.manifest["sources"] = legacy
+        original.manifest["config"]["systems"] = legacy["available_systems"]
+        original.jobs.append(dict(name="analytics-teseo", status="ok", log="",
+                                  metadata=dict(suite="gfe", system="teseo.13")))
+        original.save()
+        with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
+            regenerated = Pipeline(parser().parse_args(self.arguments("--stages", "report")))
+        self.assertEqual(regenerated.capabilities, legacy)
+        self.assertEqual(regenerated.manifest["config"]["systems"], legacy["available_systems"])
+        self.assertEqual(regenerated.jobs, original.jobs)
+
     def test_arm_coverage_distinguishes_available_grid_from_full_paper_grid(self):
         with patch("pipeline.load_source_versions", return_value=ARM_SOURCES):
             p = Pipeline(parser().parse_args(self.arguments("--stages", "all,tables,batch")))
         # Export coverage after successful renderers have produced the complete
-        # smoke artifact set. Only the unavailable Spruce measurements are absent.
+        # smoke artifact set. The unavailable Spruce and Teseo measurements are absent.
         expected = ["figures/figure8.pdf", "figures/figure9.pdf", "figures/figure10.pdf",
                     "figures/figure12_a.pdf", "figures/figure12_b.pdf", "figures/figure13.pdf",
                     "tables/figure12_transformations.csv", "tables/table7_baselines.csv"]
@@ -153,6 +193,7 @@ class RuntimeCapabilitiesTests(unittest.TestCase):
         readme = (p.output / "README.md").read_text()
         self.assertIn("Architecture: **arm64**", readme)
         self.assertIn("bvgt: Spruce/bvgt requires x86-64", readme)
+        self.assertIn("teseo: Teseo CPU-affinity topology detection is unsupported on ARM64", readme)
 
     def test_default_and_all_coverage_requires_only_selected_figures(self):
         sources = dict(architecture="amd64", available_systems=list(SYSTEMS))

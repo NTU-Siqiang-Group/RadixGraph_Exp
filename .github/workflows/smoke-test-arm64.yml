@@ -64,10 +64,13 @@ jobs:
               assert header[:4] == b"\x7fELF", binary
               assert int.from_bytes(header[18:20], "little") == {"amd64": 62, "arm64": 183}[arch], binary
           if arch == "arm64":
-              assert source["excluded_systems"]["bvgt"], source
-              assert "bvgt" not in source["available_systems"], source
-              assert not (build / "gfe_driver_bvgt").exists()
+              assert set(source["available_systems"]) == {"radixgraph", "sortledton", "gtx"}, source
+              for system in ("bvgt", "teseo"):
+                  assert source["excluded_systems"][system], source
+                  assert system not in source["available_systems"], source
+                  assert not (build / f"gfe_driver_{system}").exists()
               assert not Path("/workspace/gfe_driver/libBVGT.a").exists()
+              assert not Path("/workspace/gfe_driver/teseo/build").exists()
           PY
 
       - name: Run default smoke experiments
@@ -111,9 +114,11 @@ jobs:
           assert not coverage["full_experiment_scope"], coverage
           assert manifest["config"]["systems"] == capabilities["available_systems"], manifest["config"]
           if arch == "arm64":
-              assert "bvgt" not in capabilities["available_systems"], capabilities
-              assert capabilities["excluded_systems"]["bvgt"], capabilities
-              assert not any("bvgt" in job["name"] for job in manifest["jobs"]), manifest["jobs"]
+              assert set(capabilities["available_systems"]) == {"radixgraph", "sortledton", "gtx"}, capabilities
+              for system in ("bvgt", "teseo"):
+                  assert system not in capabilities["available_systems"], capabilities
+                  assert capabilities["excluded_systems"][system], capabilities
+                  assert not any(system in job["name"] for job in manifest["jobs"]), manifest["jobs"]
           else:
               assert "bvgt" in capabilities["available_systems"], capabilities
           table_jobs = [job["name"] for job in manifest["jobs"]

@@ -25,13 +25,19 @@ if manifest['architecture'] == 'amd64':
     manifest['spruce_library_sha256'] = hashlib.sha256((gfe / 'libBVGT.a').read_bytes()).hexdigest()
 else:
     manifest['available_systems'].remove('bvgt')
+    manifest['available_systems'].remove('teseo')
     manifest['excluded_systems']['bvgt'] = 'Spruce/bvgt requires x86_64'
+    manifest['excluded_systems']['teseo'] = 'Teseo CPU-affinity topology detection is unsupported on ARM64'
     manifest['spruce_library_sha256'] = None
-manifest['teseo_numa'] = False
+manifest['teseo_numa'] = False if manifest['architecture'] == 'amd64' else None
 manifest['compiler'] = subprocess.check_output([os.environ['CXX'], '--version'], text=True).splitlines()[0]
-manifest['patches'] = ['Teseo non-NUMA thread contexts select allocated node zero', 'GAPBS queue/CAS atomics restored in standalone and GFE RadixGraph', 'graphlog full/single-element rightmost subtree bounds', 'GFE aging worker-zero partition restored and final operation counts logged', 'runtime standalone thread count', 'kernel-independent VmRSS field parsing', 'batch max-id bit length',
+manifest['patches'] = ['GAPBS queue/CAS atomics restored in standalone and GFE RadixGraph', 'graphlog full/single-element rightmost subtree bounds', 'GFE aging worker-zero partition restored and final operation counts logged', 'runtime standalone thread count', 'kernel-independent VmRSS field parsing', 'batch max-id bit length',
                        'transformation bounds guard and size arguments', 'slightly skewed workload distribution',
-                       'GFE aging zero timeout is unlimited', 'GTX LCC honors the configured timeout']
+                       'GFE aging zero timeout is unlimited', 'GTX LCC honors the configured timeout',
+                       'GFE deletion skips undefined final-edge-normalized milestones for empty final graphs',
+                       'Smoke concurrent reader/writer warmup handshake; paper startup unchanged']
+if manifest['architecture'] == 'amd64':
+    manifest['patches'].insert(0, 'Teseo non-NUMA thread contexts select allocated node zero')
 if manifest['architecture'] == 'arm64':
     manifest['patches'] += ['ARM64 Teseo/Sortledton SIMD through SIMDe',
         'ARM64 monotonic epoch clock, sequentially consistent barriers and 128-bit atomics',
