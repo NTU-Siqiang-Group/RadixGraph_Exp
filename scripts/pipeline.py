@@ -22,6 +22,42 @@ EXPERIMENT_STAGES = {"main", "studies", "batch", "tables", *FIGURE_STAGES}
 SYSTEMS = {"radixgraph": "radixgraph", "bvgt": "bvgt", "teseo": "teseo.13", "sortledton": "sortledton.4", "gtx": "gtx"}
 
 
+def load_source_versions():
+    for path in (HERE.parent / "source-versions.json", Path("/workspace/build-manifest.json")):
+        if path.is_file():
+            return json.loads(path.read_text())
+    return {}
+
+
+def runtime_capabilities(sources=None):
+    """Prefer image capabilities, including when the image runs under emulation."""
+    sources = load_source_versions() if sources is None else sources
+    machine = sources.get("architecture") or platform.machine()
+    architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine.lower(), machine.lower())
+    available = sources.get("available_systems")
+    if available is None:
+        available = [system for system in SYSTEMS if architecture != "arm64" or system != "bvgt"]
+    if not isinstance(available, list) or not available or set(available) - set(SYSTEMS):
+        raise ValueError("Image manifest available_systems must list known GFE systems")
+    available = list(dict.fromkeys(available))
+    exclusions = dict(sources.get("excluded_systems", {}))
+    for system in (name for name in SYSTEMS if name not in available):
+        exclusions.setdefault(system, "Spruce/bvgt requires x86-64 and is excluded from ARM64 images"
+                              if system == "bvgt" and architecture == "arm64"
+                              else "System is not included in this image")
+    return dict(architecture=architecture, available_systems=available,
+                excluded_systems=exclusions)
+
+
+def select_systems(value, capabilities):
+    names = split_names(value, SYSTEMS)
+    unavailable = [system for system in names if system not in capabilities["available_systems"]]
+    if unavailable:
+        reasons = [system + ": " + capabilities["excluded_systems"][system] for system in unavailable]
+        raise argparse.ArgumentTypeError("Unavailable systems: " + "; ".join(reasons))
+    return names
+
+
 def gfe_job_name(system, spec, experiment, variant=""):
     return "-".join(filter(None, [experiment, system, spec["name"], variant]))
 
@@ -43,6 +79,10 @@ def split_names(value, allowed):
 class Pipeline:
     def __init__(self, args):
         self.args = args
+        sources = load_source_versions()
+        self.capabilities = runtime_capabilities(sources)
+        if args.stages != ["report"]:
+            args.systems = select_systems(",".join(args.systems), self.capabilities)
         self.profile = args.profile
         self.gfe = args.gfe_dir.resolve()
         self.radix = args.radix_dir.resolve()
@@ -74,17 +114,16 @@ class Pipeline:
             self.manifest = json.loads(self.manifest_path.read_text())
             self.jobs = self.manifest["jobs"]
             self.profile = self.manifest["profile"]
+            self.capabilities = self.manifest.get("capabilities", self.capabilities)
         else:
-            self.manifest = dict(profile=self.profile, started_utc=datetime.now(timezone.utc).isoformat(),
+            self.manifest = dict(profile=self.profile, capabilities=self.capabilities,
+                                 started_utc=datetime.now(timezone.utc).isoformat(),
                                  config=vars(args), threads=self.threads, jobs=self.jobs,
                                  host=dict(platform=platform.platform(), cpu_count=os.cpu_count(),
                                            cpuinfo=Path("/proc/cpuinfo").read_text() if Path("/proc/cpuinfo").exists() else "",
                                            meminfo=Path("/proc/meminfo").read_text() if Path("/proc/meminfo").exists() else ""))
-            versions = HERE.parent / "source-versions.json"
-            if not versions.exists():
-                versions = Path("/workspace/build-manifest.json")
-            if versions.exists():
-                self.manifest["sources"] = json.loads(versions.read_text())
+            if sources:
+                self.manifest["sources"] = sources
             self.save()
 
     def save(self):
@@ -320,6 +359,7 @@ def study_artifacts(stages):
 
 
 def parser():
+    capabilities = runtime_capabilities()
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     result.add_argument("--profile", choices=("paper", "smoke"), default=os.getenv("PROFILE", "paper"),
                         help="smoke uses tiny synthetic fixtures and cannot reproduce paper measurements")
@@ -333,7 +373,9 @@ def parser():
     result.add_argument("--threads", type=int, default=int(os.getenv("THREADS", "0")), help="workers, 0 selects paper=64/smoke=2")
     result.add_argument("--timeout-hours", type=float, default=float(os.getenv("TIMEOUT_HOURS", "0")),
                         help="optional wall-clock limit for each job; 0 disables the limit")
-    result.add_argument("--systems", type=lambda v: split_names(v, SYSTEMS), default=list(SYSTEMS), help="GFE systems, comma-separated")
+    result.add_argument("--systems", type=lambda v: select_systems(v, capabilities),
+                        default=capabilities["available_systems"],
+                        help="GFE systems, comma-separated; defaults to systems available in this image")
     result.add_argument("--datasets", type=lambda v: split_names(v, DATASETS), default=list(DATASETS), help="dataset stems, comma-separated")
     result.add_argument("--skip-prepare", action="store_true", help="use an already prepared data cache")
     result.add_argument("--no-progress", action="store_true", help="disable the job progress bar and periodic updates")
@@ -408,11 +450,15 @@ def export(p):
     for path in missing:
         if not any(j.get("name") == "missing-artifact-" + path for j in p.jobs):
             p.note("missing-artifact-" + path, "failed", "Expected artifact was not produced: " + path)
-    full_scope = (("main" in stages or set(FIGURE_STAGES[:4]) <= stages)
+    full_stages_and_datasets = (("main" in stages or set(FIGURE_STAGES[:4]) <= stages)
                   and ("studies" in stages or {"figure12", "figure13", "tables"} <= stages)
-                  and "batch" in stages and set(config["datasets"]) == set(DATASETS)
-                  and set(config["systems"]) == set(SYSTEMS))
-    atomic_json(p.output / "coverage.json", dict(full_experiment_scope=full_scope, profile=p.profile,
+                  and "batch" in stages and set(config["datasets"]) == set(DATASETS))
+    full_scope = full_stages_and_datasets and set(config["systems"]) == set(SYSTEMS)
+    full_available_scope = (full_stages_and_datasets
+                            and set(config["systems"]) == set(p.capabilities["available_systems"]))
+    atomic_json(p.output / "coverage.json", dict(full_experiment_scope=full_scope,
+                                                full_available_scope=full_available_scope,
+                                                capabilities=p.capabilities, selected_systems=config["systems"], profile=p.profile,
                                                 expected_artifacts=expected, missing_artifacts=missing,
                                                 renderer="original upstream scripts",
                                                 table_renderer="paper-style measured tables",
@@ -430,8 +476,12 @@ def export(p):
              "CSV tables retain this run's full-precision measurements. Table PDFs in figures/ follow the paper's layout and contain only the table grid, headers and values.",
              "Experimental plots retain the original upstream drawing code. Figure 9 mixed-update progress uses measured operation counts, completion times and the recorded workload fraction (GTX's 20% prefix for new runs; legacy records default to full workloads).",
              "See [plotting/manifest.json](plotting/manifest.json) for script hashes, inputs, execution logs, and retained upstream assumptions.",
-             "The smoke profile verifies wiring with synthetic data; it is not a paper result.", "",
-             "## Artifacts", ""] + [f"- [{a}]({a})" for a in artifacts]
+             "The smoke profile verifies wiring with synthetic data; it is not a paper result.", ""]
+    if p.capabilities["excluded_systems"]:
+        lines += ["## Image capabilities", "", "Architecture: **" + p.capabilities["architecture"] + "**.", ""]
+        lines += [f"- {system}: {reason}." for system, reason in p.capabilities["excluded_systems"].items()]
+        lines.append("")
+    lines += ["## Artifacts", ""] + [f"- [{a}]({a})" for a in artifacts]
     lines += ["", "## Original plotting", "",
               "Original plotting sources are unchanged. Figure 12(d) is retained as a measured table because no original renderer is provided.", ""]
     for plot in plotting["plots"]:

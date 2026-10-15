@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export CC=${CC:-gcc-11} CXX=${CXX:-g++-11}
+source "$(dirname -- "${BASH_SOURCE[0]}")/architecture.sh"
 BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
 [[ $BUILD_JOBS =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be a positive integer' >&2; exit 2; }
+if [[ $TARGETARCH == arm64 ]]; then
+    echo 'Skipping x86-only Spruce/bvgt and its Junction/Turf dependencies on arm64'
+    exit 0
+fi
 cmake -S "$GFE_DIR/junction" -B "$GFE_DIR/junction/build" -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local -DJUNCTION_WITH_SAMPLES=OFF
 cmake --build "$GFE_DIR/junction/build" --parallel "$BUILD_JOBS"

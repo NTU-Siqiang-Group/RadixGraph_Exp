@@ -10,24 +10,30 @@ GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_drive
 
 ### Platform and software
 
-- Supported platform: **Linux on x86-64** (`x64` / `amd64`). Both Docker images use Ubuntu 24.04.
-- Software: a working Docker installation capable of building and running Linux x86-64 containers, and Bash for the commands below.
+- Platforms for the main Docker image: **Linux on x86-64** (`x64` / `amd64`) and **Linux on ARM64** (`arm64` / `aarch64`). The image uses Ubuntu 24.04. 32-bit ARM is unsupported.
+- Software: a working Docker installation capable of building and running Linux containers for your target architecture, and Bash for the commands below.
 - Network access: required to download dependencies and source repositories during the image build, and datasets during preparation.
 
-**ARM/ARM64 is currently unsupported, including Apple Silicon (M-series Macs).** We try our best to support ARM. However, the Spruce baseline experiment depends on the released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0), which was built for x86-64. The build downloads this archive as `libBVGT.a`; it cannot be linked into a native ARM64 executable.
+**macOS:** The intended setup is [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/), which runs the Linux containers inside a Linux VM. With a local Docker Desktop builder, Apple Silicon (M-series) Macs use the ARM64 path by default, and Intel Macs use the x86-64 path.
+
+**ARM64 excludes the Spruce (`bvgt`) baseline.** Its released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0) targets x86-64. ARM64 builds skip downloading and linking this archive, and experiments automatically select the remaining systems.
 
 ### Hardware for full experiments
-
-To reproduce the full paper experiments, the following resources must be available to the container:
 
 - CPU: at least 64 usable logical CPU threads.
 - Memory: at least 256 GB of accessible RAM, swap is excluded.
 - Storage: at least 512 GB for the dataset cache. Allow additional space for Docker images, build caches, and experiment outputs, and ensure the dataset and output directories are writable.
 
+On macOS, Docker Desktop's Linux VM must have sufficient CPU and RAM allocated, and the mounted dataset cache must have sufficient storage. The Mac's total physical resources alone do not establish what the container can use.
+
 ## Reproduce RadixGraph with Docker
 
-[![docker-livejournal-test](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-livejournal-test.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-livejournal-test.yml)
-[![docker-smoke-test](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-smoke-test.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/docker-smoke-test.yml)
+[![livejournal-test-x64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/livejournal-test-x64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/livejournal-test-x64.yml)
+[![livejournal-test-arm64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/livejournal-test-arm64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/livejournal-test-arm64.yml)
+[![smoke-test-x64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-x64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-x64.yml)
+[![smoke-test-arm64](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-arm64.yml/badge.svg?branch=main)](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/actions/workflows/smoke-test-arm64.yml)
+
+Both LiveJournal workflows build the main Dockerfile and run the same targeted experiments on the real LiveJournal dataset. The x64 workflow tests all five systems, including Spruce; the ARM64 workflow tests the four available systems.
 
 Run the following commands from the repository root.
 
@@ -43,7 +49,7 @@ mkdir -p data output
 
 ### Run full experiments
 
-Run all paper experiments and generate the figures and tables:
+Run the paper profile and generate the figures and tables for the image's available systems. On ARM64, Spruce is excluded:
 ```sh
 docker_user="$(id -u):$(id -g)"
 if docker info --format '{{json .SecurityOptions}}' | grep -q rootless; then
@@ -125,7 +131,7 @@ Existing run directories can be reused only for `report`; experiment stages alwa
 
 ### Estimated runtime
 
-Allow **several days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above.
+Allow **several days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above. These estimates are for x86-64; ARM64 performance will differ.
 
 | Stage | Estimated time |
 | --- | --- |
@@ -150,7 +156,7 @@ run_radixgraph --stages all --force
 
 For the full `docker run` command, append `--force` after `--stages all`.
 
-We recommend meeting the requirements; forced runs may fail or produce incomplete results. `--force` only bypasses resource checks; it does not enable ARM support.
+We recommend meeting the requirements; forced runs may fail or produce incomplete results. `--force` only bypasses resource checks; ARM64 builds always exclude Spruce.
 
 ### Acknowledgement
 

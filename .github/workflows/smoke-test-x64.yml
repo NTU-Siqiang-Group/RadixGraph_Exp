@@ -1,4 +1,4 @@
-name: docker-smoke-test
+name: smoke-test-x64
 
 on:
   push:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  docker-smoke-test:
+  smoke-test-x64:
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -34,10 +34,41 @@ jobs:
           file: ./Dockerfile
           load: true
           push: false
-          tags: radixgraph-exp:smoke-test
+          platforms: linux/amd64
+          tags: radixgraph-exp:smoke-test-x64
           build-args: BUILD_JOBS=2
-          cache-from: type=gha,scope=docker-smoke-test
-          cache-to: type=gha,scope=docker-smoke-test,mode=max
+          cache-from: type=gha,scope=smoke-test-x64
+          cache-to: type=gha,scope=smoke-test-x64,mode=max
+
+      - name: Check image architecture and available systems
+        shell: bash
+        env:
+          EXPECTED_ARCH: amd64
+        run: |
+          set -euo pipefail
+          image=radixgraph-exp:smoke-test-x64
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$EXPECTED_ARCH"
+          docker run --rm -i --env EXPECTED_ARCH --entrypoint python3 "$image" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          arch = os.environ["EXPECTED_ARCH"]
+          source = json.loads(Path("/opt/radixgraph-exp/source-versions.json").read_text())
+          assert source["architecture"] == arch, source
+          build = Path("/workspace/gfe_driver/build")
+          for system in source["available_systems"]:
+              binary = build / f"gfe_driver_{system}"
+              with binary.open("rb") as stream:
+                  header = stream.read(20)
+              assert header[:4] == b"\x7fELF", binary
+              assert int.from_bytes(header[18:20], "little") == {"amd64": 62, "arm64": 183}[arch], binary
+          if arch == "arm64":
+              assert source["excluded_systems"]["bvgt"], source
+              assert "bvgt" not in source["available_systems"], source
+              assert not (build / "gfe_driver_bvgt").exists()
+              assert not Path("/workspace/gfe_driver/libBVGT.a").exists()
+          PY
 
       - name: Run all smoke experiments
         timeout-minutes: 60
@@ -50,15 +81,18 @@ jobs:
             --user "$(id -u):$(id -g)" \
             --mount type=bind,source="$PWD/data-smoke",target=/data \
             --mount type=bind,source="$PWD/output-smoke",target=/output \
-            radixgraph-exp:smoke-test bash /opt/radixgraph-exp/run.sh \
+            radixgraph-exp:smoke-test-x64 bash /opt/radixgraph-exp/run.sh \
             --profile smoke --stages all --threads 2 --timeout-hours 0.25 \
-            --run-dir /output/smoke 2>&1 | tee smoke-test.log
+            --run-dir /output/smoke 2>&1 | tee smoke-test-x64.log
 
       - name: Check smoke results
         shell: bash
+        env:
+          EXPECTED_ARCH: amd64
         run: |
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           run = Path("output-smoke/smoke")
@@ -70,7 +104,19 @@ jobs:
           assert manifest["jobs"], "No smoke experiments were recorded"
           failed = [job["name"] for job in manifest["jobs"] if job["status"] != "ok"]
           assert not failed, failed
-          assert coverage["full_experiment_scope"], coverage
+          arch = os.environ["EXPECTED_ARCH"]
+          capabilities = manifest["capabilities"]
+          assert capabilities["architecture"] == arch, capabilities
+          assert coverage["full_available_scope"], coverage
+          assert manifest["config"]["systems"] == capabilities["available_systems"], manifest["config"]
+          if arch == "arm64":
+              assert "bvgt" not in capabilities["available_systems"], capabilities
+              assert capabilities["excluded_systems"]["bvgt"], capabilities
+              assert not any("bvgt" in job["name"] for job in manifest["jobs"]), manifest["jobs"]
+              assert not coverage["full_experiment_scope"], coverage
+          else:
+              assert "bvgt" in capabilities["available_systems"], capabilities
+              assert coverage["full_experiment_scope"], coverage
           assert not coverage["missing_artifacts"], coverage["missing_artifacts"]
           for artifact in coverage["expected_artifacts"]:
               path = run / artifact
@@ -87,9 +133,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: docker-smoke-test-results
+          name: smoke-test-x64-results
           path: |
             output-smoke/
-            smoke-test.log
+            smoke-test-x64.log
           if-no-files-found: warn
           retention-days: 14

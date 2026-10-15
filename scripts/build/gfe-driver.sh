@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export CC=${CC:-gcc-11} CXX=${CXX:-g++-11}
+source "$(dirname -- "${BASH_SOURCE[0]}")/architecture.sh"
 BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
 [[ $BUILD_JOBS =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be a positive integer' >&2; exit 2; }
+name=${1:?Expected system name}
+if [[ $TARGETARCH == arm64 && $name == bvgt ]]; then
+    echo 'Skipping x86-only Spruce/bvgt driver on arm64'
+    exit 0
+fi
 python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-timeouts.py" "$GFE_DIR"
 build_driver() {
     local name=$1 system=$2 hops=$3 lib=$4
@@ -19,11 +25,12 @@ build_driver() {
     mkdir -p "$build"
     # Configure first probes a C executable, before setting up C++ libraries.
     # Keep Spruce's C++ archive dependencies out of that probe.
-    local extra_ldflags=''
+    local extra_ldflags='' extra_libs=''
+    [[ $TARGETARCH != arm64 ]] || extra_libs='-latomic'
     [[ $system != bvgt ]] || extra_ldflags='-L/usr/local/lib'
     (cd "$build"
      enable_mem_analysis=yes "$GFE_DIR/configure" --enable-optimize --disable-debug \
-        "--with-$system=$lib" LDFLAGS="$extra_ldflags"
+        "--with-$system=$lib" LDFLAGS="$extra_ldflags" LIBS="$extra_libs"
      # configure adds BVGT and junction. Turf must follow both static archives.
      if [[ $system == bvgt ]]; then
          printf '\nLDFLAGS += -lturf\n' >> Makefile
@@ -31,7 +38,6 @@ build_driver() {
      make -j"$BUILD_JOBS")
     cp "$build/gfe_driver" "$GFE_DIR/build/gfe_driver_$name"
 }
-name=${1:?Expected system name}
 system=$name
 hops=both
 case "$name" in

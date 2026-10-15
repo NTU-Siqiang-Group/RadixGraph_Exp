@@ -1,0 +1,180 @@
+name: livejournal-test-arm64
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  livejournal-test-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build ARM64 LiveJournal image
+        timeout-minutes: 150
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          load: true
+          push: false
+          tags: radixgraph-exp:livejournal-test-arm64
+          build-args: BUILD_JOBS=2
+          cache-from: type=gha,scope=livejournal-test-arm64
+          cache-to: type=gha,scope=livejournal-test-arm64,mode=max
+
+      - name: Prepare the real LiveJournal dataset only
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=radixgraph-exp:livejournal-test-arm64
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = arm64
+          mkdir -p data-livejournal-arm64 output-livejournal-arm64
+          docker run --rm -i --platform linux/arm64 \
+            --user "$(id -u):$(id -g)" --workdir /data \
+            --mount type=bind,source="$PWD/data-livejournal-arm64",target=/data \
+            --mount type=bind,source="$PWD/output-livejournal-arm64",target=/output \
+            --entrypoint bash "$image" -s <<'BASH' 2>&1 | tee livejournal-prepare-arm64.log
+          set -euo pipefail
+          # The normal paper preparer downloads all six datasets. This job uses
+          # the complete SNAP LiveJournal graph and needs no graphlogs.
+          wget --tries=5 --timeout=60 \
+            https://snap.stanford.edu/data/bigdata/communities/com-lj.ungraph.txt.gz \
+            --output-document=com-lj.ungraph.txt.gz
+          gzip -t com-lj.ungraph.txt.gz
+          # Preserve the original example's undirected edge normalization.
+          gzip -cd com-lj.ungraph.txt.gz | \
+            awk '!/^#/ && NF >= 2 {if ($1 <= $2) print $1, $2; else print $2, $1}' | \
+            LC_ALL=C sort --parallel=2 --buffer-size=1G --temporary-directory=/data \
+              --key=1,1n --key=2,2n --unique > com-lj.ungraph.el
+          "$GFE_DIR/generate_property_files" /data/com-lj.ungraph.el
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("/data")
+          name = "com-lj.ungraph"
+          properties = dict(line.split("=", 1) for line in
+                            (root / f"{name}.properties").read_text().splitlines()
+                            if "=" in line and not line.lstrip().startswith("#"))
+          properties = {key.strip(): value.strip() for key, value in properties.items()}
+          vertices = int(properties[f"graph.{name}.meta.vertices"])
+          edges = int(properties[f"graph.{name}.meta.edges"])
+          assert vertices > 1_000_000 and edges > 10_000_000, (vertices, edges)
+          # Match create_vertex_ops: connect every vertex to the next, closing
+          # the ring. Stream the generated vertex list instead of loading it.
+          count = 0
+          first = previous = None
+          with (root / f"{name}.v").open() as source, (root / f"{name}.vertices.el").open("w") as target:
+              for line in source:
+                  vertex = line.strip()
+                  if not vertex:
+                      continue
+                  if previous is not None:
+                      target.write(f"{previous} {vertex}\n")
+                  else:
+                      first = vertex
+                  previous = vertex
+                  count += 1
+              assert previous is not None, "Empty LiveJournal vertex list"
+              target.write(f"{previous} {first}\n")
+          assert count == vertices, (count, vertices)
+          digest = hashlib.sha256()
+          with (root / f"{name}.txt.gz").open("rb") as source:
+              for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          provenance = dict(dataset=name, synthetic=False, vertices=vertices, edges=edges,
+                            source="https://snap.stanford.edu/data/bigdata/communities/com-lj.ungraph.txt.gz",
+                            edge_normalization="canonical undirected endpoints, sorted unique",
+                            archive_sha256=digest.hexdigest())
+          (Path("/output") / "livejournal-source.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          (root / ".profile").write_text("paper\n")
+          print(f"Prepared full LiveJournal: {vertices:,} vertices and {edges:,} edges")
+          PY
+          BASH
+
+      - name: Run retained systems on LiveJournal
+        timeout-minutes: 165
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI runs the full real graph with two workers; --force acknowledges
+          # that this targeted test does not meet the full-paper hardware floor.
+          # Omit --systems to exercise automatic ARM64 baseline selection.
+          docker run --rm --platform linux/arm64 --init --stop-timeout 60 \
+            --user "$(id -u):$(id -g)" \
+            --mount type=bind,source="$PWD/data-livejournal-arm64",target=/data \
+            --mount type=bind,source="$PWD/output-livejournal-arm64",target=/output \
+            radixgraph-exp:livejournal-test-arm64 bash /opt/radixgraph-exp/run.sh \
+            --profile paper --stages figure8,figure10 --datasets com-lj.ungraph \
+            --skip-prepare --force --threads 2 --timeout-hours 0.5 \
+            --run-dir /output/livejournal 2>&1 | tee livejournal-test-arm64.log
+
+      - name: Check ARM64 LiveJournal results
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("output-livejournal-arm64")
+          run = root / "livejournal"
+          source = json.loads((root / "livejournal-source.json").read_text())
+          assert source["synthetic"] is False and source["vertices"] > 1_000_000 and source["edges"] > 10_000_000, source
+          manifest = json.loads((run / "manifest.json").read_text())
+          assert manifest["profile"] == "paper" and manifest["status"] == "finished", manifest
+          capabilities = manifest["capabilities"]
+          expected = {"radixgraph", "teseo", "sortledton", "gtx"}
+          assert capabilities["architecture"] == "arm64", capabilities
+          assert set(capabilities["available_systems"]) == expected, capabilities
+          assert capabilities["excluded_systems"]["bvgt"], capabilities
+          assert set(manifest["config"]["systems"]) == expected, manifest["config"]
+          assert manifest["config"]["datasets"] == ["com-lj.ungraph"], manifest["config"]
+          assert manifest["config"]["skip_prepare"], manifest["config"]
+          assert manifest["jobs"] and all(job["status"] == "ok" for job in manifest["jobs"]), manifest["jobs"]
+          jobs = [job for job in manifest["jobs"] if job.get("metadata", {}).get("suite") == "gfe"]
+          systems = {"radixgraph", "teseo.13", "sortledton.4", "gtx"}
+          assert len(jobs) == 12, jobs
+          assert {(job["metadata"]["system"], job["metadata"]["experiment"]) for job in jobs} == {
+              (system, experiment) for system in systems for experiment in ("random", "vertices", "analytics")
+          }, jobs
+          assert all(job["metadata"]["dataset"] == "com-lj.ungraph" for job in jobs), jobs
+          coverage = json.loads((run / "coverage.json").read_text())
+          assert not coverage["missing_artifacts"], coverage
+          for figure in ("figure8.pdf", "figure10.pdf"):
+              path = run / "figures" / figure
+              assert path.is_file() and path.stat().st_size > 0, path
+          print("All four retained ARM64 systems passed 12 real LiveJournal experiments.")
+          PY
+
+      - name: Upload LiveJournal results and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: livejournal-test-arm64-results
+          path: |
+            output-livejournal-arm64/
+            livejournal-prepare-arm64.log
+            livejournal-test-arm64.log
+          if-no-files-found: warn
+          retention-days: 14

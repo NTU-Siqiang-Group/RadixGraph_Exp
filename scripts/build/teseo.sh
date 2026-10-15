@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export CC=${CC:-gcc-11} CXX=${CXX:-g++-11}
+source "$(dirname -- "${BASH_SOURCE[0]}")/architecture.sh"
 BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
@@ -26,4 +27,6 @@ PYFIX
 mkdir -p "$GFE_DIR/teseo/build"
 # Docker build cannot reliably detect the NUMA topology of the runtime host.
 # Teseo's non-NUMA mode is portable; record this choice in build provenance.
-(cd "$GFE_DIR/teseo/build" && ../configure --enable-optimize --disable-debug --disable-numa && make -j"$BUILD_JOBS")
+extra_libs=()
+[[ $TARGETARCH != arm64 ]] || extra_libs=(LIBS=-latomic)
+(cd "$GFE_DIR/teseo/build" && ../configure --enable-optimize --disable-debug --disable-numa "${extra_libs[@]}" && make -j"$BUILD_JOBS")

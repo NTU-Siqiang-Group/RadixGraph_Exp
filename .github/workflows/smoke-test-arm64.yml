@@ -1,0 +1,141 @@
+name: smoke-test-arm64
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-test-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build smoke-test Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          platforms: linux/arm64
+          tags: radixgraph-exp:smoke-test-arm64
+          build-args: BUILD_JOBS=2
+          cache-from: type=gha,scope=smoke-test-arm64
+          cache-to: type=gha,scope=smoke-test-arm64,mode=max
+
+      - name: Check image architecture and available systems
+        shell: bash
+        env:
+          EXPECTED_ARCH: arm64
+        run: |
+          set -euo pipefail
+          image=radixgraph-exp:smoke-test-arm64
+          test "$(docker image inspect "$image" --format '{{.Architecture}}')" = "$EXPECTED_ARCH"
+          docker run --rm -i --env EXPECTED_ARCH --entrypoint python3 "$image" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          arch = os.environ["EXPECTED_ARCH"]
+          source = json.loads(Path("/opt/radixgraph-exp/source-versions.json").read_text())
+          assert source["architecture"] == arch, source
+          build = Path("/workspace/gfe_driver/build")
+          for system in source["available_systems"]:
+              binary = build / f"gfe_driver_{system}"
+              with binary.open("rb") as stream:
+                  header = stream.read(20)
+              assert header[:4] == b"\x7fELF", binary
+              assert int.from_bytes(header[18:20], "little") == {"amd64": 62, "arm64": 183}[arch], binary
+          if arch == "arm64":
+              assert source["excluded_systems"]["bvgt"], source
+              assert "bvgt" not in source["available_systems"], source
+              assert not (build / "gfe_driver_bvgt").exists()
+              assert not Path("/workspace/gfe_driver/libBVGT.a").exists()
+          PY
+
+      - name: Run all smoke experiments
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p data-smoke output-smoke
+          # Compression of a newly generated smoke graphlog takes several minutes.
+          docker run --rm --init --stop-timeout 60 \
+            --user "$(id -u):$(id -g)" \
+            --mount type=bind,source="$PWD/data-smoke",target=/data \
+            --mount type=bind,source="$PWD/output-smoke",target=/output \
+            radixgraph-exp:smoke-test-arm64 bash /opt/radixgraph-exp/run.sh \
+            --profile smoke --stages all --threads 2 --timeout-hours 0.25 \
+            --run-dir /output/smoke 2>&1 | tee smoke-test-arm64.log
+
+      - name: Check smoke results
+        shell: bash
+        env:
+          EXPECTED_ARCH: arm64
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          run = Path("output-smoke/smoke")
+          manifest = json.loads((run / "manifest.json").read_text())
+          coverage = json.loads((run / "coverage.json").read_text())
+          artifacts = json.loads((run / "artifacts.json").read_text())
+          assert manifest["profile"] == "smoke", manifest["profile"]
+          assert manifest["status"] == "finished", manifest["status"]
+          assert manifest["jobs"], "No smoke experiments were recorded"
+          failed = [job["name"] for job in manifest["jobs"] if job["status"] != "ok"]
+          assert not failed, failed
+          arch = os.environ["EXPECTED_ARCH"]
+          capabilities = manifest["capabilities"]
+          assert capabilities["architecture"] == arch, capabilities
+          assert coverage["full_available_scope"], coverage
+          assert manifest["config"]["systems"] == capabilities["available_systems"], manifest["config"]
+          if arch == "arm64":
+              assert "bvgt" not in capabilities["available_systems"], capabilities
+              assert capabilities["excluded_systems"]["bvgt"], capabilities
+              assert not any("bvgt" in job["name"] for job in manifest["jobs"]), manifest["jobs"]
+              assert not coverage["full_experiment_scope"], coverage
+          else:
+              assert "bvgt" in capabilities["available_systems"], capabilities
+              assert coverage["full_experiment_scope"], coverage
+          assert not coverage["missing_artifacts"], coverage["missing_artifacts"]
+          for artifact in coverage["expected_artifacts"]:
+              path = run / artifact
+              assert path.is_file() and path.stat().st_size > 0, artifact
+          for number in (5, 6, 7):
+              assert f"figures/table{number}.pdf" in artifacts, number
+          for name in ("table5", "table6", "table7", "figure12_fanouts", "figure12_memory_costs", "figure12_transformations"):
+              assert not (run / "tables" / f"{name}.md").exists(), name
+          assert not list((run / "figures").glob("table*.png")), "Unexpected table PNGs"
+          print(f"Smoke test passed: {len(manifest['jobs'])} jobs; all expected artifacts retained.")
+          PY
+
+      - name: Upload smoke results and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-test-arm64-results
+          path: |
+            output-smoke/
+            smoke-test-arm64.log
+          if-no-files-found: warn
+          retention-days: 14

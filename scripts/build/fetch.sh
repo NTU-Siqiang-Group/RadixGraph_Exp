@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export CC=${CC:-gcc-11} CXX=${CXX:-g++-11}
+source "$(dirname -- "${BASH_SOURCE[0]}")/architecture.sh"
 BUILD_JOBS=${BUILD_JOBS:-2}
 GFE_DIR=${GFE_DIR:-/workspace/gfe_driver}
 RADIX_DIR=${RADIX_DIR:-/workspace/RadixGraph}
@@ -59,11 +60,18 @@ PY
 
 checkout https://github.com/MordorsElite/graphlog-base.git "$GFE_DIR/graphlog-base" "$GRAPHLOG_REV"
 git -C "$GFE_DIR/graphlog-base" submodule update --init --recursive
-checkout https://github.com/preshing/junction.git "$GFE_DIR/junction" "$JUNCTION_REV"
-checkout https://github.com/preshing/turf.git "$GFE_DIR/turf" "$TURF_REV"
+if [[ $TARGETARCH == amd64 ]]; then
+    checkout https://github.com/preshing/junction.git "$GFE_DIR/junction" "$JUNCTION_REV"
+    checkout https://github.com/preshing/turf.git "$GFE_DIR/turf" "$TURF_REV"
+fi
 checkout https://github.com/cwida/teseo.git "$GFE_DIR/teseo" "$TESEO_REV"
 checkout https://gitlab.db.in.tum.de/per.fuchs/sortledton.git "$GFE_DIR/sortledton" "$SORTLEDTON_REV"
 checkout https://github.com/Jiboxiake/GTX-SIGMOD2025.git "$GFE_DIR/GTX-SIGMOD2025" "$GTX_REV"
 git -C "$GFE_DIR/GTX-SIGMOD2025" submodule update --init --recursive
+if [[ $TARGETARCH == arm64 ]]; then
+    python3 "$(dirname -- "${BASH_SOURCE[0]}")/patch-arm64.py" gfe "$GFE_DIR"
+    # Standalone RadixGraph copies this file into each variant build tree.
+    sed -i 's/-march=native/-march=armv8-a/g' "$RADIX_DIR/CMakeLists.txt"
+fi
 "$CXX" "$RADIX_DIR/optimizer.cpp" -O3 -o "$RADIX_DIR/optimizer"
 cp "$RADIX_DIR/optimizer" "$GFE_DIR/optimizer"
