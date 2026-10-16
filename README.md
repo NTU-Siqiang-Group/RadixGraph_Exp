@@ -154,7 +154,7 @@ We recommend meeting the requirements; forced runs may fail or produce incomplet
 
 ### Acknowledgement
 
-The Docker reproduction pipeline was largely developed and validated with assistance from [OpenAI Codex](https://openai.com/codex/).
+The Docker reproduction pipeline was largely developed and validated with assistance from [OpenAI Codex](https://openai.com/codex/). For details, refer to the [AI collaboration report](https://github.com/NTU-Siqiang-Group/RadixGraph_Exp/blob/main/AI_collaboration_report.md).
 
 ## Reproduce RadixGraph with Jupyter Notebook in a step-by-step manner
 
