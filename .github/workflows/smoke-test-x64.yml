@@ -37,8 +37,8 @@ jobs:
           platforms: linux/amd64
           tags: radixgraph-exp:smoke-test-x64
           build-args: BUILD_JOBS=2
-          cache-from: type=gha,scope=smoke-test-x64
-          cache-to: type=gha,scope=smoke-test-x64,mode=max
+          # CPU-native binaries must be rebuilt for each runner's CPU.
+          no-cache: true
 
       - name: Check image architecture and available systems
         shell: bash
