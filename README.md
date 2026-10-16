@@ -61,7 +61,7 @@ docker run --rm --init --stop-timeout 60 \
   radixgraph-exp bash /opt/radixgraph-exp/run.sh --profile paper --stages all
 ```
 
-Find plots and table PDFs are in `output/<UTC-run-id>/figures/`, and raw CSV results are in `output/<UTC-run-id>/tables/`.
+Find plots and table PDFs are in `output/<UTC-run-id>/figures/`, and raw CSV results are in `output/<UTC-run-id>/tables/`. The estimated runtime of full experiments is **6 days**.
 
 ### Run the experiments stage by stage (Recommended)
 
@@ -126,7 +126,7 @@ Existing run directories can be reused only for `report`; experiment stages alwa
 
 ### Estimated runtime
 
-Allow **several days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above. These estimates are for x86-64; ARM64 performance will differ.
+Allow **several days for the first full run** on a 64-thread Xeon server meeting the memory and disk requirements above.
 
 | Stage | Estimated time |
 | --- | --- |
