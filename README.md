@@ -16,7 +16,7 @@ GFE driver for RadixGraph (test kits): [https://github.com/ForwardStar/gfe_drive
 
 **macOS:** The intended setup is [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/), which runs the Linux containers inside a Linux VM. With a local Docker Desktop builder, Apple Silicon (M-series) Macs use the ARM64 path by default, and Intel Macs use the x86-64 path.
 
-**ARM64 runs RadixGraph, Sortledton, and GTX; Spruce (`bvgt`) and Teseo are excluded.** Spruce's released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0) targets x86-64, so ARM64 builds skip downloading and linking it. Teseo's CPU-affinity topology detection assumes x86-style `/proc/cpuinfo` fields and fails on ARM64; its library and driver builds are skipped. Experiments automatically select the three supported systems, and explicitly selecting an excluded system reports an error. The x86-64 image retains all five systems.
+**We strongly recommend running on Linux on x86-64. ARM64 runs only RadixGraph, Sortledton, and GTX, while Spruce (`bvgt`) and Teseo are excluded.** Spruce's released, precompiled [`libBVGT_stable.a` library](https://github.com/Stardust-SJF/gfe_driver/releases/tag/v2.0.0) targets x86-64, so ARM64 builds skip downloading and linking it. Teseo's CPU-affinity topology detection assumes x86-style `/proc/cpuinfo` fields and fails on ARM64; its library and driver builds are skipped. Experiments automatically select the three supported systems, and explicitly selecting an excluded system reports an error. The x86-64 image retains all five systems.
 
 ### Hardware for full experiments
 
